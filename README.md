@@ -25,6 +25,8 @@ English is measured in words/min. Vietnamese is measured in syllables (tiếng)/
 
 ## Setup
 
+Requires **Node.js 22 or newer** (the AI SDK does not support Node 20).
+
 ```bash
 npm install
 cp .env.example .env.local   # then add one AI provider key (Gemini has a free tier)
