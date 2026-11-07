@@ -1,26 +1,12 @@
 {
   "version": "7",
-  "dialect": "sqlite",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "6",
-      "when": 1793993701028,
-      "tag": "0000_greedy_marvel_zombies",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1794044959801,
-      "tag": "0001_tricky_magus",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1794046780590,
-      "tag": "0002_glamorous_forge",
+      "version": "7",
+      "when": 1794050712044,
+      "tag": "0000_aberrant_next_avengers",
       "breakpoints": true
     }
   ]

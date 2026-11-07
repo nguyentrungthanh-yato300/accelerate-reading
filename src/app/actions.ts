@@ -1,35 +1,56 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getDb } from "@/db";
 import {
+  aiSettings,
   articles,
-  sessions,
+  readingSessions,
+  type AiProvider,
   type ChunkPlan,
   type PurposeCoach,
   type PurposeType,
   type ReadingMode,
   type SummaryFeedback,
 } from "@/db/schema";
-import { coachPurpose, evaluateSummary, getModel } from "@/lib/ai";
+import { coachPurpose, evaluateSummary } from "@/lib/ai";
+import { getUserModel } from "@/lib/ai-settings";
+import { INVITE_COOKIE, isValidInvite } from "@/lib/auth";
+import { encrypt } from "@/lib/crypto";
+import { requireUser } from "@/lib/dal";
 import { extractFromUrl } from "@/lib/extract";
+import { AI_PROVIDERS } from "@/lib/providers";
 import { countWords, detectLanguage, unitLabel } from "@/lib/text";
 
-export type FormState = { error?: string };
+export type FormState = { error?: string; ok?: boolean };
+
+// Server Actions are reachable by direct POST, so each one checks the user and, for existing
+// records, that the record belongs to them.
+
+async function ownArticle(userId: string, articleId: number) {
+  const db = await getDb();
+  return db.query.articles.findFirst({ where: and(eq(articles.id, articleId), eq(articles.userId, userId)) });
+}
+
+async function ownSession(userId: string, sessionId: number) {
+  const db = await getDb();
+  const session = await db.query.readingSessions.findFirst({
+    where: and(eq(readingSessions.id, sessionId), eq(readingSessions.userId, userId)),
+  });
+  const article = session && (await ownArticle(userId, session.articleId));
+  return session && article ? { session, article } : null;
+}
 
 export async function createArticle(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
   const url = String(formData.get("url") ?? "").trim();
   let title = String(formData.get("title") ?? "").trim();
   let content = String(formData.get("content") ?? "").trim();
 
   if (url) {
-    try {
-      new URL(url);
-    } catch {
-      return { error: "That URL is not valid." };
-    }
     try {
       const extracted = await extractFromUrl(url);
       content = extracted.content;
@@ -52,7 +73,7 @@ export async function createArticle(_prev: FormState, formData: FormData): Promi
   const db = await getDb();
   const [row] = await db
     .insert(articles)
-    .values({ title, content, sourceUrl: url || null, language, wordCount })
+    .values({ userId: user.id, title, content, sourceUrl: url || null, language, wordCount })
     .returning({ id: articles.id });
 
   revalidatePath("/");
@@ -60,8 +81,9 @@ export async function createArticle(_prev: FormState, formData: FormData): Promi
 }
 
 export async function deleteArticle(id: number) {
+  const user = await requireUser();
   const db = await getDb();
-  await db.delete(articles).where(eq(articles.id, id));
+  await db.delete(articles).where(and(eq(articles.id, id), eq(articles.userId, user.id)));
   revalidatePath("/");
   revalidatePath("/history");
 }
@@ -71,16 +93,16 @@ export async function checkPurpose(
   articleId: number,
   purpose: string,
 ): Promise<{ coach: PurposeCoach } | { error: string }> {
-  const db = await getDb();
-  const article = await db.query.articles.findFirst({ where: eq(articles.id, articleId) });
+  const user = await requireUser();
+  const article = await ownArticle(user.id, articleId);
   if (!article) return { error: "Article not found." };
-  const model = getModel();
-  if (!model) return { error: "AI is not configured." };
+  const model = await getUserModel(user.id);
+  if (!model) return { error: "Add your AI API key in Settings first." };
   try {
     return { coach: await coachPurpose(model, { text: article.content, language: article.language, purpose }) };
   } catch (e) {
     console.error("Purpose coaching failed", e);
-    return { error: "Could not check your question. Check your AI configuration." };
+    return { error: "Could not check your question. Check your AI settings." };
   }
 }
 
@@ -93,10 +115,13 @@ export async function startSession(input: {
   preAnswers: string[] | null;
   previewMs: number;
 }): Promise<number> {
+  const user = await requireUser();
+  if (!(await ownArticle(user.id, input.articleId))) throw new Error("Article not found");
   const db = await getDb();
   const [row] = await db
-    .insert(sessions)
+    .insert(readingSessions)
     .values({
+      userId: user.id,
       articleId: input.articleId,
       mode: input.mode,
       purpose: input.purpose.trim() || null,
@@ -105,7 +130,7 @@ export async function startSession(input: {
       preAnswers: input.preAnswers?.map((a) => a.trim()) ?? null,
       previewMs: Math.round(input.previewMs),
     })
-    .returning({ id: sessions.id });
+    .returning({ id: readingSessions.id });
   return row.id;
 }
 
@@ -115,18 +140,17 @@ export async function finishReading(
   /** Time-weighted pacer speed and phrasing, when the pacer ran for most of the read. */
   pacer: { wpm: number; chunks: ChunkPlan["source"] } | null,
 ): Promise<{ wpm: number }> {
-  const db = await getDb();
-  const session = await db.query.sessions.findFirst({ where: eq(sessions.id, sessionId) });
-  if (!session) throw new Error("Session not found");
-  const article = await db.query.articles.findFirst({ where: eq(articles.id, session.articleId) });
-  if (!article) throw new Error("Article not found");
+  const user = await requireUser();
+  const own = await ownSession(user.id, sessionId);
+  if (!own) throw new Error("Session not found");
 
   const ms = Math.max(1000, Math.round(readMs));
-  const wpm = article.wordCount / (ms / 60_000);
+  const wpm = own.article.wordCount / (ms / 60_000);
+  const db = await getDb();
   await db
-    .update(sessions)
+    .update(readingSessions)
     .set({ readMs: ms, wpm, pacerWpm: pacer?.wpm ?? null, pacerChunks: pacer?.chunks ?? null, status: "recall" })
-    .where(eq(sessions.id, sessionId));
+    .where(eq(readingSessions.id, sessionId));
   return { wpm };
 }
 
@@ -135,11 +159,10 @@ export async function submitRecall(input: {
   summary: string;
   answers: number[] | null;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
-  const db = await getDb();
-  const session = await db.query.sessions.findFirst({ where: eq(sessions.id, input.sessionId) });
-  if (!session) return { ok: false, error: "Session not found." };
-  const article = await db.query.articles.findFirst({ where: eq(articles.id, session.articleId) });
-  if (!article) return { ok: false, error: "Article not found." };
+  const user = await requireUser();
+  const own = await ownSession(user.id, input.sessionId);
+  if (!own) return { ok: false, error: "Session not found." };
+  const { session, article } = own;
 
   const quiz = article.quiz;
   let quizScore: number | null = null;
@@ -149,7 +172,7 @@ export async function submitRecall(input: {
   }
 
   let feedback: SummaryFeedback | null = null;
-  const model = getModel();
+  const model = await getUserModel(user.id);
   if (model && quiz && input.summary.trim()) {
     try {
       feedback = await evaluateSummary(model, {
@@ -166,8 +189,9 @@ export async function submitRecall(input: {
     }
   }
 
+  const db = await getDb();
   await db
-    .update(sessions)
+    .update(readingSessions)
     .set({
       summary: input.summary.trim() || null,
       quizAnswers: input.answers,
@@ -178,9 +202,65 @@ export async function submitRecall(input: {
       status: "done",
       completedAt: new Date(),
     })
-    .where(eq(sessions.id, input.sessionId));
+    .where(eq(readingSessions.id, input.sessionId));
 
   revalidatePath("/");
   revalidatePath("/history");
+  return { ok: true };
+}
+
+/** Saves the user's AI provider; the API key is encrypted before it is stored. Leaving the key
+ * empty keeps the saved one (for changing only the provider's model or URL). */
+export async function saveAiSettings(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  const provider = String(formData.get("provider") ?? "") as AiProvider;
+  if (!(provider in AI_PROVIDERS)) return { error: "Choose a provider." };
+  const model = String(formData.get("model") ?? "").trim() || null;
+  const baseUrl = String(formData.get("baseUrl") ?? "").trim() || null;
+  const apiKey = String(formData.get("apiKey") ?? "").trim();
+
+  if (AI_PROVIDERS[provider].needsBaseUrl) {
+    if (!baseUrl || !/^https:\/\//.test(baseUrl)) return { error: "Enter the provider's https:// base URL." };
+    if (!model) return { error: "Enter a model id." };
+  }
+
+  const db = await getDb();
+  const existing = await db.query.aiSettings.findFirst({ where: eq(aiSettings.userId, user.id) });
+  if (!apiKey && !existing) return { error: "Enter your API key." };
+
+  const values = {
+    provider,
+    model,
+    baseUrl: AI_PROVIDERS[provider].needsBaseUrl ? baseUrl : null,
+    ...(apiKey && { apiKeyEncrypted: encrypt(apiKey), apiKeyHint: apiKey.slice(-4) }),
+    updatedAt: new Date(),
+  };
+  if (existing) {
+    await db.update(aiSettings).set(values).where(eq(aiSettings.userId, user.id));
+  } else {
+    await db.insert(aiSettings).values({ userId: user.id, ...values, apiKeyEncrypted: values.apiKeyEncrypted!, apiKeyHint: values.apiKeyHint! });
+  }
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function deleteAiSettings() {
+  const user = await requireUser();
+  const db = await getDb();
+  await db.delete(aiSettings).where(eq(aiSettings.userId, user.id));
+  revalidatePath("/", "layout");
+}
+
+/** Before a new user signs up with a provider: checks the invite code and keeps it in a short-lived
+ * cookie, which the auth server checks again when it creates the account. */
+export async function prepareSignup(code: string): Promise<{ ok: boolean }> {
+  if (!isValidInvite(code)) return { ok: false };
+  (await cookies()).set(INVITE_COOKIE, code.trim(), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 10 * 60,
+  });
   return { ok: true };
 }

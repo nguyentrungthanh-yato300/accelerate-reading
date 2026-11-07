@@ -1,8 +1,10 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import type { LanguageModel } from "ai";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { articles, type ChunkPlan, type Language } from "@/db/schema";
-import { generateChunks, getModel, type ChunkedSegment } from "@/lib/ai";
+import { generateChunks, type ChunkedSegment } from "@/lib/ai";
+import { getUserModel } from "@/lib/ai-settings";
 import { planFromSizes, ruleSizes, segmentTexts } from "@/lib/chunks";
 import { parseBlocks, splitWords } from "@/lib/text";
 
@@ -35,9 +37,7 @@ function sizesFromAi(words: string[], seg: ChunkedSegment | undefined, language:
   return { sizes, hard };
 }
 
-async function aiPlan(texts: string[], language: Language): Promise<ChunkPlan> {
-  const model = getModel();
-  if (!model) throw new Error("AI is not configured.");
+async function aiPlan(model: LanguageModel, texts: string[], language: Language): Promise<ChunkPlan> {
   const segments = texts.map((t) => splitWords(t, language));
 
   const batches: number[][] = [[]];
@@ -78,15 +78,19 @@ async function aiPlan(texts: string[], language: Language): Promise<ChunkPlan> {
   return planFromSizes("ai", sizes, hard);
 }
 
-/** Generates (once) and caches the AI phrase segmentation for an article. */
-export async function ensureChunks(articleId: number): Promise<ChunksResult> {
+/** Generates (once) and caches the AI phrase segmentation for a user's article. */
+export async function ensureChunks(userId: string, articleId: number): Promise<ChunksResult> {
   const db = await getDb();
-  const article = await db.query.articles.findFirst({ where: eq(articles.id, articleId) });
+  const article = await db.query.articles.findFirst({
+    where: and(eq(articles.id, articleId), eq(articles.userId, userId)),
+  });
   if (!article) return { plan: null, error: "Article not found." };
   if (article.chunks) return { plan: article.chunks };
 
+  const model = await getUserModel(userId);
+  if (!model) return { plan: null, error: "Add your AI API key in Settings first." };
   try {
-    const plan = await aiPlan(segmentTexts(parseBlocks(article.content)), article.language);
+    const plan = await aiPlan(model, segmentTexts(parseBlocks(article.content)), article.language);
     await db.update(articles).set({ chunks: plan }).where(eq(articles.id, articleId));
     return { plan };
   } catch (e) {

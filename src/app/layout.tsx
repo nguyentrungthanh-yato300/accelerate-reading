@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Literata } from "next/font/google";
 import Link from "next/link";
+import { Suspense } from "react";
+import { UserMenu } from "@/components/UserMenu";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin", "latin-ext"] });
@@ -34,6 +36,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Link href="/history" className="text-sm text-stone-600 hover:text-foreground dark:text-stone-400">
               Progress
             </Link>
+            {/* reads the session, so it streams in without holding the page */}
+            <Suspense>
+              <UserMenu />
+            </Suspense>
           </nav>
         </header>
         <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>

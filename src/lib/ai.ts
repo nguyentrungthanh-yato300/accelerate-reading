@@ -6,64 +6,30 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText, Output, type LanguageModel } from "ai";
 import { z } from "zod";
-import type { Language, PurposeCoach, Quiz, ReadingMode, SummaryFeedback } from "@/db/schema";
+import type { AiProvider, Language, PurposeCoach, Quiz, ReadingMode, SummaryFeedback } from "@/db/schema";
+import { AI_PROVIDERS } from "@/lib/providers";
 
-/**
- * Provider-agnostic model selection. Configure with env vars:
- *   AI_PROVIDER = google | anthropic | openai | deepseek | openai-compatible | ollama
- *   AI_MODEL    = model id (optional, sensible default per provider)
- */
-const DEFAULT_MODELS: Record<string, string> = {
-  google: "gemini-flash-latest",
-  anthropic: "claude-sonnet-5-5",
-  openai: "gpt-5.5",
-  deepseek: "deepseek-v4-flash",
-  ollama: "qwen3",
-};
+/** A user's provider settings, with the API key decrypted (see src/lib/ai-settings.ts). */
+export type AiConfig = { provider: AiProvider; model: string | null; baseUrl: string | null; apiKey: string };
 
-function resolveProvider(): string | null {
-  const p = process.env.AI_PROVIDER?.trim().toLowerCase();
-  if (p) return p;
-  if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) return "google";
-  if (process.env.ANTHROPIC_API_KEY) return "anthropic";
-  if (process.env.OPENAI_API_KEY) return "openai";
-  if (process.env.DEEPSEEK_API_KEY) return "deepseek";
-  return null;
-}
-
-export function getModel(): LanguageModel | null {
-  const provider = resolveProvider();
-  if (!provider) return null;
-  const modelId = process.env.AI_MODEL?.trim() || DEFAULT_MODELS[provider];
-
-  switch (provider) {
+/** Provider-agnostic model selection from the user's own settings and API key. */
+export function getModel(config: AiConfig): LanguageModel {
+  const modelId = config.model?.trim() || AI_PROVIDERS[config.provider].defaultModel;
+  const apiKey = config.apiKey;
+  switch (config.provider) {
     case "google":
-      return createGoogle()(modelId);
+      return createGoogle({ apiKey })(modelId);
     case "anthropic":
-      return createAnthropic()(modelId);
+      return createAnthropic({ apiKey })(modelId);
     case "openai":
-      return createOpenAI()(modelId);
+      return createOpenAI({ apiKey })(modelId);
     case "deepseek":
-      return createDeepSeek()(modelId);
-    case "ollama":
-      return createOpenAICompatible({
-        name: "ollama",
-        baseURL: process.env.AI_BASE_URL ?? "http://localhost:11434/v1",
-      })(modelId);
+      return createDeepSeek({ apiKey })(modelId);
     case "openai-compatible": {
-      const baseURL = process.env.AI_BASE_URL;
-      if (!baseURL || !modelId) throw new Error("openai-compatible needs AI_BASE_URL and AI_MODEL");
-      return createOpenAICompatible({ name: "custom", baseURL, apiKey: process.env.AI_API_KEY })(modelId);
+      if (!config.baseUrl || !modelId) throw new Error("An OpenAI-compatible provider needs a base URL and a model.");
+      return createOpenAICompatible({ name: "custom", baseURL: config.baseUrl, apiKey })(modelId);
     }
-    default:
-      throw new Error(`Unknown AI_PROVIDER "${provider}"`);
   }
-}
-
-export function aiStatus(): { configured: boolean; label: string } {
-  const provider = resolveProvider();
-  if (!provider) return { configured: false, label: "AI not configured" };
-  return { configured: true, label: `${provider} · ${process.env.AI_MODEL || DEFAULT_MODELS[provider] || "?"}` };
 }
 
 function langName(language: Language) {

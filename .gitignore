@@ -41,6 +41,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local SQLite database
+# local databases (old SQLite file, embedded PGlite)
 /data/*.db
 /data/*.db-*
+/data/pglite/

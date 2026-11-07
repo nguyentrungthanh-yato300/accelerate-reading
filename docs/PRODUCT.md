@@ -4,7 +4,7 @@
 
 ## 1. Mục tiêu sản phẩm
 
-Đây là web app **cá nhân** (một người dùng) giúp đọc tài liệu kỹ thuật công nghệ:
+Đây là web app (ban đầu cho một người, nay **nhiều người dùng, mỗi người dữ liệu riêng**, đăng ký bằng mã mời) giúp đọc tài liệu kỹ thuật công nghệ:
 - **nhanh hơn**;
 - **hiểu nhanh hơn**;
 - **tóm tắt và nhớ** được để **trình bày lại** cho người khác.
@@ -14,7 +14,7 @@
 | Người dùng | Người đi làm, đọc nhiều tài liệu kỹ thuật |
 | Ngôn ngữ nội dung | Tiếng Anh, tiếng Việt **và** tiếng Trung |
 | Ngôn ngữ giao diện | **Tiếng Anh** |
-| Nền tảng | Website, chạy trên máy cá nhân |
+| Nền tảng | Website, deploy trên **Vercel** (vẫn chạy được trên máy cá nhân) |
 | Triết lý | **Áp dụng khoa học** (khoa học nhận thức, khoa học thần kinh về đọc), trung thực, không hứa kiểu "đọc 1000 từ/phút" |
 
 ## 2. Nền tảng khoa học (lý do của từng tính năng)
@@ -59,17 +59,18 @@ Nếu không có AI key, app vẫn đo tốc độ và lưu bản tóm tắt, ch
 | Hạng mục | Lựa chọn | Lý do |
 |---|---|---|
 | Framework | Next.js 16 (App Router, Cache Components bật) + TypeScript + Tailwind 4 | Web, một codebase |
-| Cơ sở dữ liệu | **SQLite** qua Drizzle ORM và `@libsql/client`, file `data/reading.db`, tự migrate khi chạy | Dùng một mình, đơn giản, sao lưu bằng cách copy file. Có thể chuyển sang Turso nếu cần dùng nhiều thiết bị |
-| Đăng nhập | **Không có** | Dùng cá nhân |
-| AI | Vercel AI SDK v7, **không phụ thuộc một nhà cung cấp**: `google`, `anthropic`, `openai`, `deepseek`, `ollama`, `openai-compatible` | Đổi nhà cung cấp chỉ bằng biến môi trường |
-| AI đang dùng | **DeepSeek** (`AI_PROVIDER=deepseek`, model `deepseek-v4-flash`) | Rẻ. Provider riêng `@ai-sdk/deepseek` đưa JSON schema vào prompt nên kết quả ổn định |
+| Cơ sở dữ liệu | **Postgres** qua Drizzle ORM: **Neon** trên Vercel (`DATABASE_URL`), **PGlite** nhúng ở `data/pglite` khi chạy local. Migration chạy lúc build trên Vercel (`vercel-build`), tự chạy lúc khởi động khi local | Vercel không có ổ đĩa bền nên bỏ SQLite file. Script `scripts/import-sqlite.mjs` chuyển dữ liệu SQLite cũ sang |
+| Đăng nhập | **Better Auth** với Google/GitHub. Đăng ký **cần mã mời** (`INVITE_CODE`). Đăng nhập email chỉ có khi dev local | Nhiều người dùng; mã mời chặn người lạ lạm dụng server |
+| AI | Vercel AI SDK v7, **không phụ thuộc một nhà cung cấp**: `google`, `anthropic`, `openai`, `deepseek`, `openai-compatible` | **Mỗi người dùng tự nhập API key** ở trang Settings; key mã hóa AES-256-GCM (`ENCRYPTION_KEY`) trong DB, không bao giờ gửi về trình duyệt. Không có key nào trong code hay biến môi trường |
+| AI chủ dự án dùng | **DeepSeek** (`deepseek-v4-flash`) | Rẻ. Provider riêng `@ai-sdk/deepseek` đưa JSON schema vào prompt nên kết quả ổn định |
 | Nhập URL | `@mozilla/readability` + `linkedom` | Lấy phần nội dung chính, bỏ menu và footer |
 | Font đọc | Literata (tiếng Trung dùng font Song/Ming của hệ thống) | Thiết kế cho đọc lâu trên màn hình, hỗ trợ tiếng Việt |
 
 ## 6. Trạng thái hiện tại
 
 - MVP đã xong, nằm trên nhánh `claude/reading-ability-app-r384vp`.
-- Đã kiểm thử end-to-end bằng AI giả lập. **Chưa kiểm thử với DeepSeek thật**: việc cần làm đầu tiên là chạy một phiên đến bước Check.
+- Đã kiểm thử end-to-end với DeepSeek thật (Preview → Check), cả tiếng Anh và tiếng Trung.
+- Đã chuyển sang nhiều người dùng + Postgres; đã kiểm thử local: mã mời, tách dữ liệu giữa hai tài khoản, lưu key mã hóa, import SQLite. **Chưa deploy lên Vercel** (cần tạo Neon, OAuth app và biến môi trường, xem README).
 - Đã sửa hai lỗi:
   - cảnh báo hydration ở `<html>` do tiện ích trình duyệt chèn class, sửa bằng `suppressHydrationWarning`;
   - cảnh báo khi điều hướng do dữ liệu tải ngoài `Suspense`, sửa bằng `loading.tsx` cho từng trang.
@@ -91,6 +92,7 @@ Nếu không có AI key, app vẫn đo tốc độ và lưu bản tóm tắt, ch
 
 - **Cần Node.js 22 trở lên** (AI SDK v7 yêu cầu).
 - Cài thư viện bằng `npm ci`. **Không chạy `npm audit fix --force`**: lệnh này hạ `drizzle-kit` xuống 0.18 và làm hỏng dự án. Các cảnh báo audit còn lại chỉ thuộc công cụ phát triển (`drizzle-kit`, `eslint`), không ảnh hưởng app.
-- File `.env.local` (không commit) chứa `AI_PROVIDER` và API key. Mẫu xem ở `.env.example`.
+- File `.env.local` (không commit) chứa secret cho auth, mã hóa và mã mời khi dev. Mẫu xem ở `.env.example`. API key AI **không** đặt ở đây.
+- PGlite chỉ cho một tiến trình: dừng `npm run dev` trước khi chạy script vào DB local.
 - Sửa `src/db/schema.ts` xong thì chạy `npm run db:generate` để tạo migration.
 - Next.js 16 khác nhiều so với các bản cũ: đọc `node_modules/next/dist/docs/` trước khi viết code (xem `AGENTS.md`).

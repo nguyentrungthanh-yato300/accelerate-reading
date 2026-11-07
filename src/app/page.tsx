@@ -2,14 +2,19 @@ import Link from "next/link";
 import { DeleteArticleButton } from "@/components/DeleteArticleButton";
 import { NewArticleForm } from "@/components/NewArticleForm";
 import { Card, LangBadge, Stat, num, pct } from "@/components/ui";
-import { aiStatus } from "@/lib/ai";
+import { getAiStatus } from "@/lib/ai-settings";
+import { requireUser } from "@/lib/dal";
 import { computeStats, listArticles, listCompletedSessions } from "@/lib/queries";
 import { unitLabel } from "@/lib/text";
 
 export default async function Home() {
-  const [articleRows, completed] = await Promise.all([listArticles(), listCompletedSessions()]);
+  const user = await requireUser();
+  const [articleRows, completed, ai] = await Promise.all([
+    listArticles(),
+    listCompletedSessions(),
+    getAiStatus(user.id),
+  ]);
   const stats = computeStats(completed).filter((s) => s.sessions > 0);
-  const ai = aiStatus();
 
   return (
     <div className="space-y-8">
@@ -22,8 +27,11 @@ export default async function Home() {
         </p>
         {!ai.configured && (
           <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">
-            AI is not configured, so quizzes and summary feedback are off. Copy <code>.env.example</code> to{" "}
-            <code>.env.local</code> and add an API key (Gemini has a free tier).
+            AI is off, so there are no quizzes, phrase pacing or feedback yet.{" "}
+            <Link href="/settings" className="font-medium underline">
+              Add your AI API key
+            </Link>{" "}
+            (Gemini has a free tier).
           </p>
         )}
       </section>
