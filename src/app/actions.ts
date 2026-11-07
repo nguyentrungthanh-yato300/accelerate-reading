@@ -4,8 +4,15 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/db";
-import { articles, sessions, type Quiz, type ReadingMode, type SummaryFeedback } from "@/db/schema";
-import { evaluateSummary, generateQuiz, getModel } from "@/lib/ai";
+import {
+  articles,
+  sessions,
+  type PurposeCoach,
+  type PurposeType,
+  type ReadingMode,
+  type SummaryFeedback,
+} from "@/db/schema";
+import { coachPurpose, evaluateSummary, getModel } from "@/lib/ai";
 import { extractFromUrl } from "@/lib/extract";
 import { countWords, detectLanguage } from "@/lib/text";
 
@@ -55,22 +62,21 @@ export async function deleteArticle(id: number) {
   revalidatePath("/history");
 }
 
-/** Generates (once) and caches the comprehension quiz for an article. */
-export async function ensureQuiz(articleId: number): Promise<{ quiz: Quiz | null; error?: string }> {
+/** AI feedback on the reader's purpose question, or suggested questions when it is empty. */
+export async function checkPurpose(
+  articleId: number,
+  purpose: string,
+): Promise<{ coach: PurposeCoach } | { error: string }> {
   const db = await getDb();
   const article = await db.query.articles.findFirst({ where: eq(articles.id, articleId) });
-  if (!article) return { quiz: null, error: "Article not found." };
-  if (article.quiz) return { quiz: article.quiz };
-
+  if (!article) return { error: "Article not found." };
   const model = getModel();
-  if (!model) return { quiz: null, error: "AI is not configured." };
+  if (!model) return { error: "AI is not configured." };
   try {
-    const quiz = await generateQuiz(model, article.content, article.language);
-    await db.update(articles).set({ quiz }).where(eq(articles.id, articleId));
-    return { quiz };
+    return { coach: await coachPurpose(model, { text: article.content, language: article.language, purpose }) };
   } catch (e) {
-    console.error("Quiz generation failed", e);
-    return { quiz: null, error: "Could not generate questions. Check your AI configuration." };
+    console.error("Purpose coaching failed", e);
+    return { error: "Could not check your question. Check your AI configuration." };
   }
 }
 
@@ -78,7 +84,9 @@ export async function startSession(input: {
   articleId: number;
   mode: ReadingMode;
   purpose: string;
+  purposeType: PurposeType | null;
   prediction: string;
+  preAnswers: string[] | null;
   previewMs: number;
   pacerWpm: number | null;
 }): Promise<number> {
@@ -89,7 +97,9 @@ export async function startSession(input: {
       articleId: input.articleId,
       mode: input.mode,
       purpose: input.purpose.trim() || null,
+      purposeType: input.purposeType,
       prediction: input.prediction.trim() || null,
+      preAnswers: input.preAnswers?.map((a) => a.trim()) ?? null,
       previewMs: Math.round(input.previewMs),
       pacerWpm: input.pacerWpm,
     })
@@ -138,6 +148,7 @@ export async function submitRecall(input: {
         keyPoints: quiz.keyPoints,
         summary: input.summary,
         purpose: session.purpose,
+        prediction: session.prediction,
         mode: session.mode,
       });
     } catch (e) {

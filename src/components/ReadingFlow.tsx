@@ -2,9 +2,20 @@
 
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ensureQuiz, finishReading, startSession, submitRecall } from "@/app/actions";
-import type { Language, Quiz, ReadingMode } from "@/db/schema";
-import { buildPreview, formatDuration, parseBlocks, unitLabel, type Block } from "@/lib/text";
+import { checkPurpose, finishReading, startSession, submitRecall } from "@/app/actions";
+import type { Language, PurposeCoach, PurposeType, Quiz, ReadingMode } from "@/db/schema";
+import type { QuizResult } from "@/lib/quiz";
+import {
+  MAX_PLAUSIBLE_WPM,
+  PACER_MAX_WPM,
+  PACER_MIN_WPM,
+  PURPOSE_TYPES,
+  buildPreview,
+  formatDuration,
+  parseBlocks,
+  unitLabel,
+  type Block,
+} from "@/lib/text";
 import { buttonPrimary, buttonSecondary, input } from "./ui";
 
 type Step = "preview" | "purpose" | "read" | "recall" | "quiz";
@@ -61,6 +72,11 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
   const [step, setStep] = useState<Step>("preview");
   const [prediction, setPrediction] = useState("");
   const [purpose, setPurpose] = useState("");
+  const [purposeType, setPurposeType] = useState<PurposeType | null>(null);
+  const [coach, setCoach] = useState<PurposeCoach | null>(null);
+  const [coaching, setCoaching] = useState(false);
+  const [coachError, setCoachError] = useState<string | null>(null);
+  const [preAnswers, setPreAnswers] = useState<string[]>([]);
   const [mode, setMode] = useState<ReadingMode>("deep");
   const [pacerOn, setPacerOn] = useState(false);
   const [pacerWpm, setPacerWpm] = useState(suggestedWpm);
@@ -91,13 +107,49 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
 
   const loadQuiz = useCallback(() => {
     if (!aiConfigured) return Promise.resolve();
-    quizPromise.current ??= ensureQuiz(article.id).then((r) => {
-      setQuiz(r.quiz);
-      setQuizError(r.error ?? null);
-      if (r.quiz) setAnswers(r.quiz.questions.map(() => null));
-    });
+    quizPromise.current ??= fetch(`/api/articles/${article.id}/quiz`, { method: "POST" })
+      .then((res) => res.json() as Promise<QuizResult>)
+      .catch((): QuizResult => ({ quiz: null, error: "Could not reach the server." }))
+      .then((r) => {
+        setQuiz(r.quiz);
+        setQuizError(r.error ?? null);
+        if (r.quiz) {
+          setAnswers(r.quiz.questions.map(() => null));
+          setPreAnswers((r.quiz.preQuestions ?? []).map(() => ""));
+        }
+      });
     return quizPromise.current;
   }, [aiConfigured, article.id]);
+
+  // Generate questions during Preview: the warm-up questions are needed at the Purpose step.
+  useEffect(() => {
+    void loadQuiz();
+  }, [loadQuiz]);
+
+  function applyPurposeType(t: PurposeType) {
+    setPurposeType(t);
+    setMode(PURPOSE_TYPES[t].mode);
+  }
+
+  async function askCoach() {
+    setCoaching(true);
+    setCoachError(null);
+    try {
+      const r = await checkPurpose(article.id, purpose);
+      if ("error" in r) {
+        setCoachError(r.error);
+      } else {
+        setCoach(r.coach);
+        if (purpose.trim()) applyPurposeType(r.coach.purposeType);
+      }
+    } catch {
+      setCoachError("Could not check your question.");
+    } finally {
+      setCoaching(false);
+    }
+  }
+
+  const preQuestions = quiz?.preQuestions ?? [];
 
   async function beginReading() {
     setBusy(true);
@@ -108,12 +160,13 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
         articleId: article.id,
         mode,
         purpose,
+        purposeType: purpose.trim() ? purposeType : null,
         prediction,
+        preAnswers: preQuestions.length ? preAnswers : null,
         previewMs: previewClock.read(),
         pacerWpm: pacerOn ? pacerWpm : null,
       });
       setSessionId(id);
-      void loadQuiz(); // generate questions while the user reads
       setStep("read");
       window.scrollTo({ top: 0 });
       readClock.start();
@@ -127,9 +180,17 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
   async function doneReading() {
     if (!sessionId) return;
     readClock.pause();
+    const ms = readClock.read();
+    if (
+      article.wordCount / (ms / 60_000) > MAX_PLAUSIBLE_WPM &&
+      !confirm(`That pace is over ${MAX_PLAUSIBLE_WPM} ${unit}/min, faster than reading with understanding allows. Finish anyway?`)
+    ) {
+      readClock.start();
+      return;
+    }
     setBusy(true);
     try {
-      const r = await finishReading(sessionId, readClock.read());
+      const r = await finishReading(sessionId, ms);
       setWpm(r.wpm);
       setStep("recall");
       window.scrollTo({ top: 0 });
@@ -243,11 +304,56 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
             What question should this reading answer for you?
             <input
               value={purpose}
-              onChange={(e) => setPurpose(e.target.value)}
+              onChange={(e) => {
+                setPurpose(e.target.value);
+                // feedback and purpose type described the previous wording
+                setCoach(null);
+                setPurposeType(null);
+              }}
               placeholder="e.g. How does the cache invalidation work, and when should I use it?"
               className={`${input} mt-1`}
             />
           </label>
+          {aiConfigured && (
+            <div className="space-y-3">
+              <button type="button" className={buttonSecondary} disabled={coaching} onClick={askCoach}>
+                {coaching ? "Thinking…" : purpose.trim() ? "Check my question" : "Suggest questions"}
+              </button>
+              {coachError && <p className="text-sm text-red-600">{coachError}</p>}
+              {coach && (
+                <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/40">
+                  {purposeType && (
+                    <p className="font-medium">
+                      {PURPOSE_TYPES[purposeType].label}
+                      {!coach.specific && <span className="font-normal text-amber-700 dark:text-amber-400"> · too broad</span>}
+                      {!coach.answerable && (
+                        <span className="font-normal text-amber-700 dark:text-amber-400"> · this text may not answer it</span>
+                      )}
+                    </p>
+                  )}
+                  <p>{coach.feedback}</p>
+                  {coach.suggestions.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-stone-500">Use a suggestion, or edit your own:</p>
+                      {coach.suggestions.map((s, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => {
+                            setPurpose(s);
+                            applyPurposeType(coach.purposeType);
+                          }}
+                          className="block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-left hover:border-amber-500 dark:border-stone-700 dark:bg-stone-900"
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             {(
               [
@@ -265,11 +371,47 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
                     : "border-stone-200 dark:border-stone-800"
                 }`}
               >
-                <div className="font-medium">{label}</div>
+                <div className="font-medium">
+                  {label}
+                  {purposeType && PURPOSE_TYPES[purposeType].mode === value && (
+                    <span className="ml-2 rounded bg-amber-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                      Suggested
+                    </span>
+                  )}
+                </div>
                 <div className="mt-1 text-sm text-stone-500">{desc}</div>
               </button>
             ))}
           </div>
+          {purposeType && (
+            <p className="text-sm text-stone-500">
+              For “{PURPOSE_TYPES[purposeType].label}”: {PURPOSE_TYPES[purposeType].hint}
+            </p>
+          )}
+          {aiConfigured && (!quiz || preQuestions.length > 0) && (
+            <div className="space-y-3 rounded-xl border border-stone-200 p-4 dark:border-stone-800">
+              <div>
+                <div className="text-sm font-medium">Warm-up: guess before you read</div>
+                <p className="mt-1 text-sm text-stone-500">
+                  Trying to answer before reading — even wrongly — primes you to notice and remember the answers. One
+                  line each; “no idea” is fine. You’ll see the real answers with your results.
+                </p>
+              </div>
+              {!quiz && !quizError && <p className="text-sm text-stone-500">Preparing questions…</p>}
+              {quizError && <p className="text-sm text-stone-500">Warm-up unavailable: {quizError}</p>}
+              {preQuestions.map((q, i) => (
+                <label key={i} className="block text-sm">
+                  {i + 1}. {q.question}
+                  <input
+                    value={preAnswers[i] ?? ""}
+                    onChange={(e) => setPreAnswers((a) => a.map((v, j) => (j === i ? e.target.value : v)))}
+                    placeholder="Your guess"
+                    className={`${input} mt-1`}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
           <div className="rounded-xl border border-stone-200 p-4 dark:border-stone-800">
             <label className="flex items-center gap-2 text-sm font-medium">
               <input type="checkbox" checked={pacerOn} onChange={(e) => setPacerOn(e.target.checked)} />
@@ -283,8 +425,8 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
               <label className="mt-3 flex items-center gap-3 text-sm">
                 <input
                   type="range"
-                  min={100}
-                  max={600}
+                  min={PACER_MIN_WPM}
+                  max={PACER_MAX_WPM}
                   step={10}
                   value={pacerWpm}
                   onChange={(e) => setPacerWpm(Number(e.target.value))}

@@ -4,6 +4,8 @@ import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 export type Language = "en" | "vi";
 export type ReadingMode = "skim" | "deep";
 export type SessionStatus = "reading" | "recall" | "done";
+/** What the reader's purpose question asks for; drives the suggested reading mode. */
+export type PurposeType = "lookup" | "gist" | "mechanism" | "apply";
 
 export type QuizQuestion = {
   question: string;
@@ -12,9 +14,25 @@ export type QuizQuestion = {
   explanation: string;
 };
 
+/** Open question the reader guesses at before reading (pretesting effect). */
+export type PreQuestion = {
+  question: string;
+  answer: string;
+};
+
 export type Quiz = {
   keyPoints: string[];
   questions: QuizQuestion[];
+  /** Missing on quizzes cached before pre-questions existed. */
+  preQuestions?: PreQuestion[];
+};
+
+export type PurposeCoach = {
+  purposeType: PurposeType;
+  specific: boolean;
+  answerable: boolean;
+  feedback: string;
+  suggestions: string[];
 };
 
 export type SummaryFeedback = {
@@ -23,6 +41,8 @@ export type SummaryFeedback = {
   missedPoints: string[];
   inaccuracies: string[];
   purposeAnswered: boolean | null;
+  /** Missing on sessions graded before prediction checks existed. */
+  predictionCheck?: string | null;
   feedback: string;
 };
 
@@ -47,7 +67,9 @@ export const sessions = sqliteTable("sessions", {
   status: text("status").$type<SessionStatus>().notNull().default("reading"),
   mode: text("mode").$type<ReadingMode>().notNull(),
   purpose: text("purpose"),
+  purposeType: text("purpose_type").$type<PurposeType>(),
   prediction: text("prediction"),
+  preAnswers: text("pre_answers", { mode: "json" }).$type<string[]>(),
   previewMs: integer("preview_ms"),
   readMs: integer("read_ms"),
   pacerWpm: integer("pacer_wpm"),

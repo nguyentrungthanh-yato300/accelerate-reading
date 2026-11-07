@@ -1,4 +1,12 @@
-import type { Language } from "@/db/schema";
+import type { Language, PurposeType, ReadingMode } from "@/db/schema";
+
+/** The goal sets how much detail is "understood enough", so each purpose type implies a reading mode. */
+export const PURPOSE_TYPES: Record<PurposeType, { label: string; mode: ReadingMode; hint: string }> = {
+  lookup: { label: "Find a fact", mode: "skim", hint: "Scan for the part that answers it and skip the rest." },
+  gist: { label: "Get the gist", mode: "skim", hint: "Follow the structure; don't stop on details." },
+  mechanism: { label: "Understand how/why", mode: "deep", hint: "Slow down on explanations and trade-offs." },
+  apply: { label: "Decide or apply", mode: "deep", hint: "Read closely and note what you would do differently." },
+};
 
 export type Block =
   | { type: "heading"; level: number; text: string }
@@ -22,6 +30,11 @@ export function detectLanguage(text: string): Language {
 export function countWords(text: string): number {
   return text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 }
+
+/** Above this, a "reading" was really a skip-through; such sessions shouldn't steer the pacer. */
+export const MAX_PLAUSIBLE_WPM = 900;
+export const PACER_MIN_WPM = 100;
+export const PACER_MAX_WPM = 600;
 
 export function unitLabel(language: Language): string {
   return language === "vi" ? "syllables" : "words";

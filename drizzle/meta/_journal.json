@@ -8,6 +8,13 @@
       "when": 1793993701028,
       "tag": "0000_greedy_marvel_zombies",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1794044959801,
+      "tag": "0001_tricky_magus",
+      "breakpoints": true
     }
   ]
 }

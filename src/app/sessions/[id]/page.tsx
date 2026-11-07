@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, Stat, buttonPrimary, buttonSecondary, num, pct } from "@/components/ui";
 import { getSessionWithArticle, listCompletedSessions } from "@/lib/queries";
-import { formatDuration, unitLabel } from "@/lib/text";
+import { PURPOSE_TYPES, formatDuration, unitLabel } from "@/lib/text";
 
 export default async function SessionPage({ params }: PageProps<"/sessions/[id]">) {
   const { id } = await params;
@@ -12,6 +12,10 @@ export default async function SessionPage({ params }: PageProps<"/sessions/[id]"
   const unit = unitLabel(article.language);
   const fb = session.summaryFeedback;
   const quiz = article.quiz;
+  const warmUp =
+    quiz?.preQuestions && session.preAnswers
+      ? quiz.preQuestions.map((q, i) => ({ ...q, guess: session.preAnswers![i] ?? "" }))
+      : [];
 
   // Compare with your previous sessions in the same language.
   const previous = (await listCompletedSessions()).filter(
@@ -70,15 +74,48 @@ export default async function SessionPage({ params }: PageProps<"/sessions/[id]"
         </Card>
       )}
 
+      {(session.purpose || session.prediction || warmUp.length > 0) && (
+        <Card className="space-y-4">
+          <h2 className="font-semibold">Before vs after reading</h2>
+          {session.purpose && (
+            <div className="text-sm">
+              <h3 className="font-medium">
+                Your purpose
+                {session.purposeType && (
+                  <span className="ml-2 font-normal text-stone-500">· {PURPOSE_TYPES[session.purposeType].label}</span>
+                )}
+              </h3>
+              <p className="mt-1 text-stone-700 dark:text-stone-300">{session.purpose}</p>
+            </div>
+          )}
+          {session.prediction && (
+            <div className="text-sm">
+              <h3 className="font-medium">Your prediction</h3>
+              <p className="mt-1 text-stone-700 dark:text-stone-300">{session.prediction}</p>
+              {fb?.predictionCheck && <p className="mt-1 text-amber-700 dark:text-amber-400">{fb.predictionCheck}</p>}
+            </div>
+          )}
+          {warmUp.length > 0 && (
+            <div className="space-y-3 text-sm">
+              <h3 className="font-medium">Warm-up questions</h3>
+              {warmUp.map((w, i) => (
+                <div key={i}>
+                  <p className="font-medium">
+                    {i + 1}. {w.question}
+                  </p>
+                  <p className="mt-1 text-stone-500">Your guess: {w.guess || "–"}</p>
+                  <p className="mt-1 text-emerald-700 dark:text-emerald-400">From the text: {w.answer}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
       <div className="grid gap-6 md:grid-cols-2">
         <Card>
           <h2 className="mb-2 font-semibold">Your summary</h2>
           <p className="whitespace-pre-wrap text-sm text-stone-700 dark:text-stone-300">{session.summary ?? "–"}</p>
-          {session.purpose && (
-            <p className="mt-3 text-xs text-stone-500">
-              <b>Purpose:</b> {session.purpose}
-            </p>
-          )}
         </Card>
         {quiz && (
           <Card>

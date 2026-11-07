@@ -1,8 +1,9 @@
 import "server-only";
-import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, lte } from "drizzle-orm";
 import { connection } from "next/server";
 import { getDb } from "@/db";
 import { articles, sessions, type Language } from "@/db/schema";
+import { MAX_PLAUSIBLE_WPM, PACER_MAX_WPM, PACER_MIN_WPM } from "@/lib/text";
 
 export async function listArticles() {
   await connection();
@@ -72,19 +73,27 @@ export async function listCompletedSessions() {
 
 export type CompletedSession = Awaited<ReturnType<typeof listCompletedSessions>>[number];
 
-/** Median reading speed of the last 5 sessions in a language, used to suggest a pacer speed. */
+/** Median reading speed of the last 5 plausible sessions in a language, used to suggest a pacer speed. */
 export async function suggestedPacerWpm(language: Language): Promise<number> {
   const db = await getDb();
   const rows = await db
     .select({ wpm: sessions.wpm })
     .from(sessions)
     .innerJoin(articles, eq(articles.id, sessions.articleId))
-    .where(and(eq(articles.language, language), isNotNull(sessions.wpm), eq(sessions.status, "done")))
+    .where(
+      and(
+        eq(articles.language, language),
+        isNotNull(sessions.wpm),
+        lte(sessions.wpm, MAX_PLAUSIBLE_WPM),
+        eq(sessions.status, "done"),
+      ),
+    )
     .orderBy(desc(sessions.createdAt))
     .limit(5);
   const values = rows.map((r) => r.wpm!).sort((a, b) => a - b);
   if (!values.length) return language === "vi" ? 200 : 230;
-  return Math.max(100, Math.round(values[Math.floor(values.length / 2)] / 10) * 10);
+  const median = Math.round(values[Math.floor(values.length / 2)] / 10) * 10;
+  return Math.min(PACER_MAX_WPM, Math.max(PACER_MIN_WPM, median));
 }
 
 export type LanguageStats = {
