@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { checkPurpose, finishReading, startSession, submitRecall } from "@/app/actions";
-import type { Language, PurposeCoach, PurposeType, Quiz, ReadingMode } from "@/db/schema";
+import type { ChunkPlan, Language, PurposeCoach, PurposeType, Quiz, ReadingMode } from "@/db/schema";
+import type { ChunksResult } from "@/lib/chunker";
+import { chunkDurations, rulePlan, segmentEnds, segmentWords } from "@/lib/chunks";
 import type { QuizResult } from "@/lib/quiz";
 import {
   MAX_PLAUSIBLE_WPM,
@@ -27,8 +29,6 @@ const STEPS: { id: Step; label: string }[] = [
   { id: "recall", label: "Recall" },
   { id: "quiz", label: "Check" },
 ];
-
-const PACER_CHUNK = 3;
 
 export type ReadingFlowProps = {
   article: { id: number; title: string; content: string; language: Language; wordCount: number };
@@ -80,6 +80,12 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
   const [mode, setMode] = useState<ReadingMode>("deep");
   const [pacerOn, setPacerOn] = useState(false);
   const [pacerWpm, setPacerWpm] = useState(suggestedWpm);
+  const [showBreaks, setShowBreaks] = useState(false);
+  const [aiPlan, setAiPlan] = useState<ChunkPlan | null>(null);
+  const [chunksFailed, setChunksFailed] = useState(false);
+  const segments = useMemo(() => segmentWords(blocks), [blocks]);
+  const fallbackPlan = useMemo(() => rulePlan(segments, article.language), [segments, article.language]);
+  const plan = aiPlan ?? fallbackPlan;
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [wpm, setWpm] = useState<number | null>(null);
   const [summary, setSummary] = useState("");
@@ -126,6 +132,23 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
     void loadQuiz();
   }, [loadQuiz]);
 
+  // AI phrase segmentation, in parallel with the quiz; punctuation rules cover the wait.
+  useEffect(() => {
+    if (!aiConfigured) return;
+    let cancelled = false;
+    fetch(`/api/articles/${article.id}/chunks`, { method: "POST" })
+      .then((res) => res.json() as Promise<ChunksResult>)
+      .catch((): ChunksResult => ({ plan: null }))
+      .then((r) => {
+        if (cancelled) return;
+        if (r.plan) setAiPlan(r.plan);
+        else setChunksFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [aiConfigured, article.id]);
+
   function applyPurposeType(t: PurposeType) {
     setPurposeType(t);
     setMode(PURPOSE_TYPES[t].mode);
@@ -165,6 +188,7 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
         preAnswers: preQuestions.length ? preAnswers : null,
         previewMs: previewClock.read(),
         pacerWpm: pacerOn ? pacerWpm : null,
+        pacerChunks: pacerOn ? plan.source : null,
       });
       setSessionId(id);
       setStep("read");
@@ -418,8 +442,17 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
               Use a pacer
             </label>
             <p className="mt-1 text-sm text-stone-500">
-              Highlights words at a steady pace to keep attention from drifting. The full text stays visible, so you
-              can still look back — unlike one-word-at-a-time apps, which hurt comprehension.
+              Highlights one meaningful phrase at a time to keep attention from drifting, lingering on long or dense
+              phrases and at the ends of sentences. The full text stays visible, so you can still look back — unlike
+              one-word-at-a-time apps, which hurt comprehension.
+            </p>
+            <p className="mt-1 text-xs text-stone-500">
+              Phrases:{" "}
+              {aiPlan
+                ? "grouped by AI"
+                : aiConfigured && !chunksFailed
+                  ? "grouped at punctuation for now — AI phrasing is being prepared…"
+                  : "grouped at punctuation and linking words"}
             </p>
             {pacerOn && (
               <label className="mt-3 flex items-center gap-3 text-sm">
@@ -437,6 +470,14 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
                 </span>
               </label>
             )}
+            <label className="mt-3 flex items-center gap-2 text-sm font-medium">
+              <input type="checkbox" checked={showBreaks} onChange={(e) => setShowBreaks(e.target.checked)} />
+              Show phrase breaks
+            </label>
+            <p className="mt-1 text-sm text-stone-500">
+              Adds a little space between phrases, with or without the pacer. Use it as a stepping stone: the goal is
+              to group words into phrases on your own.
+            </p>
           </div>
           <button className={buttonPrimary} disabled={busy} onClick={beginReading}>
             {busy ? "Starting…" : "Start reading"}
@@ -454,6 +495,10 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
           onDone={doneReading}
           busy={busy}
           pacerWpm={pacerOn ? pacerWpm : null}
+          segments={segments}
+          plan={plan}
+          language={article.language}
+          showBreaks={showBreaks}
         />
       )}
 
@@ -574,12 +619,18 @@ function ReadStep(props: {
   onDone: () => void;
   busy: boolean;
   pacerWpm: number | null;
+  segments: string[][];
+  plan: ChunkPlan;
+  language: Language;
+  showBreaks: boolean;
 }) {
-  const { blocks, running, pacerWpm } = props;
+  const { blocks, running, pacerWpm, segments, plan, language, showBreaks } = props;
   const containerRef = useRef<HTMLDivElement>(null);
+  // Word index of the current phrase's first word: survives pauses and a plan swap mid-read.
   const pos = useRef(0);
 
   // Render words as spans once; the pacer then toggles classes imperatively.
+  // Word numbering must match splitWords/segmentWords, which the chunk plan indexes into.
   const rendered = useMemo(() => {
     let w = 0;
     const words = (text: string) =>
@@ -616,31 +667,50 @@ function ReadStep(props: {
     });
   }, [blocks]);
 
+  // Pacer: one phrase at a time, each shown for a time that follows its length, density and the
+  // pause after it, so the reader is never pushed through a hard phrase or held on an easy one.
   useEffect(() => {
     if (!pacerWpm || !running) return;
     const spans = Array.from(containerRef.current?.querySelectorAll<HTMLElement>("[data-w]") ?? []);
-    if (!spans.length) return;
+    const { chunks } = plan;
+    if (!spans.length || !chunks.length) return;
+    const durations = chunkDurations(plan, segments, pacerWpm, language);
+    let index = Math.max(0, chunks.findIndex((c) => c.end > pos.current));
     const show = (on: boolean) => {
-      for (let i = pos.current; i < Math.min(pos.current + PACER_CHUNK, spans.length); i++)
-        spans[i].classList.toggle("pacer-on", on);
+      for (let i = chunks[index].start; i < chunks[index].end; i++) spans[i]?.classList.toggle("pacer-on", on);
     };
-    show(true);
-    const t = setInterval(
-      () => {
+    let timer: ReturnType<typeof setTimeout>;
+    const step = () => {
+      pos.current = chunks[index].start;
+      show(true);
+      const first = spans[chunks[index].start];
+      const rect = first.getBoundingClientRect();
+      if (rect.top > window.innerHeight * 0.7 || rect.top < 0) first.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (index === chunks.length - 1) return; // stay on the last phrase
+      timer = setTimeout(() => {
         show(false);
-        pos.current = Math.min(pos.current + PACER_CHUNK, spans.length - 1);
-        show(true);
-        const rect = spans[pos.current].getBoundingClientRect();
-        if (rect.top > window.innerHeight * 0.7 || rect.top < 0)
-          spans[pos.current].scrollIntoView({ block: "center", behavior: "smooth" });
-      },
-      (60_000 / pacerWpm) * PACER_CHUNK,
-    );
+        index++;
+        step();
+      }, durations[index]);
+    };
+    step();
     return () => {
-      clearInterval(t);
+      clearTimeout(timer);
       show(false);
     };
-  }, [pacerWpm, running]);
+  }, [pacerWpm, running, plan, segments, language]);
+
+  // Optional phrase breaks: a little extra space after each phrase (visual-syntactic formatting).
+  useEffect(() => {
+    if (!showBreaks) return;
+    const spans = Array.from(containerRef.current?.querySelectorAll<HTMLElement>("[data-w]") ?? []);
+    const ends = segmentEnds(segments);
+    const marked = plan.chunks.filter((c) => !ends.has(c.end)).map((c) => spans[c.end - 1]).filter(Boolean);
+    for (const s of marked) s.classList.add("chunk-end");
+    return () => {
+      for (const s of marked) s.classList.remove("chunk-end");
+    };
+  }, [showBreaks, plan, segments]);
 
   return (
     <section className="space-y-4">

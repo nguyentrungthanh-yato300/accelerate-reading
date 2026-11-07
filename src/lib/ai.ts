@@ -116,6 +116,55 @@ export async function generateQuiz(model: LanguageModel, text: string, language:
   return output;
 }
 
+const chunkSchema = z.object({
+  segments: z.array(
+    z.object({
+      id: z.number().int(),
+      chunks: z.array(z.string()).describe("The segment's words, in order and unchanged, grouped into phrases."),
+      hard: z
+        .array(z.number().int())
+        .describe("0-based indices of chunks that carry a likely-new technical term or the core of a definition or mechanism."),
+    }),
+  ),
+});
+
+export type ChunkedSegment = z.infer<typeof chunkSchema>["segments"][number];
+
+/** Groups each segment's words into meaningful phrases for the pacer. The caller must verify that
+ * the words come back unchanged. */
+export async function generateChunks(
+  model: LanguageModel,
+  segments: { id: number; text: string }[],
+  language: Language,
+): Promise<ChunkedSegment[]> {
+  const unit =
+    language === "vi"
+      ? "2-6 syllables. Never split a multi-syllable Vietnamese word (e.g. keep 'cơ sở dữ liệu' or 'máy ảo' whole)"
+      : "2-5 words";
+  const { output } = await generateText({
+    model,
+    output: Output.object({ schema: chunkSchema }),
+    // Segmenting is mechanical: reasoning made it many times slower (e.g. 83s vs ~10s per article
+    // on DeepSeek) without better phrases. Options for other providers are ignored.
+    providerOptions: {
+      deepseek: { thinking: { type: "disabled" } },
+      google: { thinkingConfig: { thinkingLevel: "minimal" } },
+    },
+    system:
+      "You segment text into phrases (thought groups) for a reading pacer. Each chunk is a unit of meaning a " +
+      "reader takes in at once: a noun phrase, a verb with its object, a prepositional phrase, a short clause. " +
+      "Never cut inside a phrase, e.g. not 'the storage | class must | be enabled' but " +
+      "'the storage class | must be enabled'.",
+    prompt:
+      `Split every segment below into chunks of usually ${unit}. A single word is fine when it stands alone. ` +
+      `Copy the words exactly, keeping punctuation attached and the original order: joining a segment's ` +
+      `chunks with spaces must reproduce its text. Do not add, drop, fix or translate anything. ` +
+      `Mark as hard only the densest chunks, at most about 1 in 7. Return every segment id.\n\n` +
+      JSON.stringify(segments),
+  });
+  return output.segments;
+}
+
 const coachSchema = z.object({
   purposeType: z
     .enum(["lookup", "gist", "mechanism", "apply"])

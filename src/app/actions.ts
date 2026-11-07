@@ -7,6 +7,7 @@ import { getDb } from "@/db";
 import {
   articles,
   sessions,
+  type ChunkPlan,
   type PurposeCoach,
   type PurposeType,
   type ReadingMode,
@@ -89,6 +90,7 @@ export async function startSession(input: {
   preAnswers: string[] | null;
   previewMs: number;
   pacerWpm: number | null;
+  pacerChunks: ChunkPlan["source"] | null;
 }): Promise<number> {
   const db = await getDb();
   const [row] = await db
@@ -102,6 +104,7 @@ export async function startSession(input: {
       preAnswers: input.preAnswers?.map((a) => a.trim()) ?? null,
       previewMs: Math.round(input.previewMs),
       pacerWpm: input.pacerWpm,
+      pacerChunks: input.pacerChunks,
     })
     .returning({ id: sessions.id });
   return row.id;

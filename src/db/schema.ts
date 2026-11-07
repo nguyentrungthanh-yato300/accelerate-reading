@@ -27,6 +27,15 @@ export type Quiz = {
   preQuestions?: PreQuestion[];
 };
 
+/** A phrase for the pacer: words [start, end) by global word index (see segmentWords). */
+export type Chunk = { start: number; end: number; hard: boolean };
+
+export type ChunkPlan = {
+  /** "ai": segmented by the model (segments it got wrong fall back to rules). */
+  source: "ai" | "rules";
+  chunks: Chunk[];
+};
+
 export type PurposeCoach = {
   purposeType: PurposeType;
   specific: boolean;
@@ -54,6 +63,7 @@ export const articles = sqliteTable("articles", {
   language: text("language").$type<Language>().notNull(),
   wordCount: integer("word_count").notNull(),
   quiz: text("quiz", { mode: "json" }).$type<Quiz>(),
+  chunks: text("chunks", { mode: "json" }).$type<ChunkPlan>(),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -73,6 +83,8 @@ export const sessions = sqliteTable("sessions", {
   previewMs: integer("preview_ms"),
   readMs: integer("read_ms"),
   pacerWpm: integer("pacer_wpm"),
+  /** How the pacer's phrases were made; null when the pacer was off or used fixed 3-word chunks. */
+  pacerChunks: text("pacer_chunks").$type<ChunkPlan["source"]>(),
   wpm: real("wpm"),
   summary: text("summary"),
   summaryScore: real("summary_score"),
