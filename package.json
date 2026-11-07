@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "drizzle-kit migrate",
     "db:import-sqlite": "node --env-file-if-exists=.env.local scripts/import-sqlite.mjs",
-    "vercel-build": "drizzle-kit migrate && next build"
+    "vercel-build": "node scripts/check-env.mjs && drizzle-kit migrate && next build"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.97",

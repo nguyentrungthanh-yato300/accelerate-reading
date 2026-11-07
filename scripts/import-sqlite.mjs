@@ -17,9 +17,10 @@ if (!email) {
 
 /** Runs parameterized SQL on Postgres or PGlite through the same small interface. */
 async function connectTarget() {
-  if (process.env.DATABASE_URL) {
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (url) {
     const { default: pg } = await import("pg");
-    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    const client = new pg.Client({ connectionString: url });
     await client.connect();
     return { label: "DATABASE_URL", query: (sql, params) => client.query(sql, params), close: () => client.end() };
   }

@@ -8,8 +8,9 @@ import { Pool } from "pg";
 import * as schema from "./schema";
 
 // Postgres: Neon (or any Postgres) when DATABASE_URL is set, as on Vercel. Without it, an embedded
-// PGlite database in ./data/pglite, so local development needs no setup.
-const url = process.env.DATABASE_URL;
+// PGlite database in ./data/pglite, so local development needs no setup. POSTGRES_URL is the same
+// pooled string under the name the Vercel–Neon integration also sets.
+const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 
 // Connections survive dev hot reloads (PGlite must not open its directory twice); the Drizzle
 // wrapper is per module instance, so a reload after a schema change picks up the new tables.
