@@ -103,6 +103,23 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
   const { start: startPreview } = previewClock;
   useEffect(() => startPreview(), [startPreview]);
 
+  // How long the pacer ran, and at what speeds, while the reading clock was running. The pacer can
+  // be switched and re-paced mid-read, so the session records a time-weighted summary at the end.
+  const pacerUse = useRef({ ms: 0, wpmMs: 0, wpm: 0, since: null as number | null });
+  useEffect(() => {
+    const u = pacerUse.current;
+    if (u.since !== null) {
+      const d = performance.now() - u.since;
+      u.ms += d;
+      u.wpmMs += d * u.wpm;
+      u.since = null;
+    }
+    if (step === "read" && readClock.running && pacerOn) {
+      u.since = performance.now();
+      u.wpm = pacerWpm;
+    }
+  }, [step, readClock.running, pacerOn, pacerWpm]);
+
   // Pause the reading clock when the tab is hidden.
   const { pause: pauseRead, running: readRunning } = readClock;
   useEffect(() => {
@@ -187,8 +204,6 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
         prediction,
         preAnswers: preQuestions.length ? preAnswers : null,
         previewMs: previewClock.read(),
-        pacerWpm: pacerOn ? pacerWpm : null,
-        pacerChunks: pacerOn ? plan.source : null,
       });
       setSessionId(id);
       setStep("read");
@@ -214,7 +229,15 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
     }
     setBusy(true);
     try {
-      const r = await finishReading(sessionId, ms);
+      const u = pacerUse.current;
+      const open = u.since !== null ? performance.now() - u.since : 0;
+      const pacedMs = u.ms + open;
+      // A session counts as paced when the pacer ran for most of the reading time.
+      const pacer =
+        pacedMs >= ms / 2
+          ? { wpm: Math.round((u.wpmMs + open * u.wpm) / pacedMs / 10) * 10, chunks: plan.source }
+          : null;
+      const r = await finishReading(sessionId, ms, pacer);
       setWpm(r.wpm);
       setStep("recall");
       window.scrollTo({ top: 0 });
@@ -436,50 +459,10 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
               ))}
             </div>
           )}
-          <div className="rounded-xl border border-stone-200 p-4 dark:border-stone-800">
-            <label className="flex items-center gap-2 text-sm font-medium">
-              <input type="checkbox" checked={pacerOn} onChange={(e) => setPacerOn(e.target.checked)} />
-              Use a pacer
-            </label>
-            <p className="mt-1 text-sm text-stone-500">
-              Highlights one meaningful phrase at a time to keep attention from drifting, lingering on long or dense
-              phrases and at the ends of sentences. The full text stays visible, so you can still look back — unlike
-              one-word-at-a-time apps, which hurt comprehension. While reading: Space pauses, ←/→ moves a sentence,
-              Shift+←/→ a phrase.
-            </p>
-            <p className="mt-1 text-xs text-stone-500">
-              Phrases:{" "}
-              {aiPlan
-                ? "grouped by AI"
-                : aiConfigured && !chunksFailed
-                  ? "grouped at punctuation for now — AI phrasing is being prepared…"
-                  : "grouped at punctuation and linking words"}
-            </p>
-            {pacerOn && (
-              <label className="mt-3 flex items-center gap-3 text-sm">
-                <input
-                  type="range"
-                  min={PACER_MIN_WPM}
-                  max={PACER_MAX_WPM}
-                  step={10}
-                  value={pacerWpm}
-                  onChange={(e) => setPacerWpm(Number(e.target.value))}
-                  className="flex-1"
-                />
-                <span className="w-28 tabular-nums">
-                  {pacerWpm} {unit}/min
-                </span>
-              </label>
-            )}
-            <label className="mt-3 flex items-center gap-2 text-sm font-medium">
-              <input type="checkbox" checked={showBreaks} onChange={(e) => setShowBreaks(e.target.checked)} />
-              Show phrase breaks
-            </label>
-            <p className="mt-1 text-sm text-stone-500">
-              Adds a little space between phrases, with or without the pacer. Use it as a stepping stone: the goal is
-              to group words into phrases on your own.
-            </p>
-          </div>
+          <p className="text-sm text-stone-500">
+            While reading you can turn on a <b>pacer</b> that highlights one meaningful phrase at a time, and{" "}
+            <b>phrase breaks</b> that space phrases apart — and change them, or the pacer speed, at any moment.
+          </p>
           <button className={buttonPrimary} disabled={busy} onClick={beginReading}>
             {busy ? "Starting…" : "Start reading"}
           </button>
@@ -500,6 +483,69 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
           plan={plan}
           language={article.language}
           showBreaks={showBreaks}
+          onTogglePacer={() => setPacerOn((on) => !on)}
+          onToggleBreaks={() => setShowBreaks((on) => !on)}
+          onNudgeSpeed={(delta) =>
+            setPacerWpm((w) => Math.min(PACER_MAX_WPM, Math.max(PACER_MIN_WPM, w + delta)))
+          }
+          controls={
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+              <label
+                className="flex items-center gap-2 font-medium"
+                title="Highlights one meaningful phrase at a time, lingering on dense phrases and sentence ends. The full text stays visible, so you can still look back."
+              >
+                <input
+                  type="checkbox"
+                  checked={pacerOn}
+                  onChange={(e) => {
+                    setPacerOn(e.target.checked);
+                    e.target.blur(); // keep Space for pause/resume
+                  }}
+                />
+                Pacer
+              </label>
+              {pacerOn && (
+                <label className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={PACER_MIN_WPM}
+                    max={PACER_MAX_WPM}
+                    step={10}
+                    value={pacerWpm}
+                    onChange={(e) => setPacerWpm(Number(e.target.value))}
+                    className="w-32 sm:w-44"
+                    aria-label="Pacer speed"
+                  />
+                  <span className="w-24 tabular-nums text-stone-600 dark:text-stone-400">
+                    {pacerWpm} {unit}/min
+                  </span>
+                </label>
+              )}
+              <label
+                className="flex items-center gap-2 font-medium"
+                title="Adds a little space between phrases. A stepping stone: the goal is to group words into phrases on your own."
+              >
+                <input
+                  type="checkbox"
+                  checked={showBreaks}
+                  onChange={(e) => {
+                    setShowBreaks(e.target.checked);
+                    e.target.blur();
+                  }}
+                />
+                Phrase breaks
+              </label>
+              {(pacerOn || showBreaks) && (
+                <span className="text-xs text-stone-500">
+                  {aiPlan
+                    ? "Phrases grouped by AI"
+                    : aiConfigured && !chunksFailed
+                      ? "Phrases at punctuation for now — AI phrasing on its way…"
+                      : "Phrases at punctuation and linking words"}
+                </span>
+              )}
+            </div>
+          }
         />
       )}
 
@@ -632,6 +678,11 @@ function ReadStep(props: {
   plan: ChunkPlan;
   language: Language;
   showBreaks: boolean;
+  onTogglePacer: () => void;
+  onToggleBreaks: () => void;
+  onNudgeSpeed: (delta: number) => void;
+  /** Pacer and phrase-break settings, shown in the toolbar so they can change mid-read. */
+  controls: ReactNode;
 }) {
   const { blocks, running, pacerWpm, segments, plan, language, showBreaks } = props;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -670,24 +721,35 @@ function ReadStep(props: {
     [plan, sentenceStarts],
   );
 
-  // Keyboard: Space pauses or resumes; ←/→ move a sentence, Shift+←/→ a phrase.
-  const onToggle = useRef(props.onToggle);
+  // Keyboard: Space pauses or resumes; ←/→ move a sentence, Shift+←/→ a phrase;
+  // P toggles the pacer, B the phrase breaks, -/+ change the pacer speed.
+  const latest = useRef(props);
   useEffect(() => {
-    onToggle.current = props.onToggle;
+    latest.current = props;
   });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
-      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (target && (target.isContentEditable || /^(TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      // Checkboxes and sliders don't take text, so only the keys they use themselves are left to them.
+      if (target?.tagName === "INPUT" && !/^(checkbox|range)$/.test((target as HTMLInputElement).type)) return;
+      const key = e.key.toLowerCase();
       if (e.key === " ") {
-        // a focused button already handles Space itself
-        if (target?.tagName === "BUTTON") return;
+        // a focused button or checkbox already handles Space itself
+        if (target?.tagName === "BUTTON" || (target as HTMLInputElement | null)?.type === "checkbox") return;
         e.preventDefault();
-        if (!e.repeat) onToggle.current();
+        if (!e.repeat) latest.current.onToggle();
       } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && pacerWpm) {
+        if ((target as HTMLInputElement | null)?.type === "range") return; // the slider uses arrows
         e.preventDefault();
         move(e.shiftKey ? "phrase" : "sentence", e.key === "ArrowLeft" ? -1 : 1);
+      } else if (!e.repeat && key === "p") {
+        latest.current.onTogglePacer();
+      } else if (!e.repeat && key === "b") {
+        latest.current.onToggleBreaks();
+      } else if ((e.key === "-" || e.key === "+" || e.key === "=") && pacerWpm) {
+        latest.current.onNudgeSpeed(e.key === "-" ? -10 : 10);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -734,8 +796,9 @@ function ReadStep(props: {
 
   // Pacer: one phrase at a time, each shown for a time that follows its length, density and the
   // pause after it, so the reader is never pushed through a hard phrase or held on an easy one.
+  // While paused the current phrase stays highlighted, so the reader can reflect and step around.
   useEffect(() => {
-    if (!pacerWpm || !running) return;
+    if (!pacerWpm) return;
     const spans = Array.from(containerRef.current?.querySelectorAll<HTMLElement>("[data-w]") ?? []);
     const { chunks } = plan;
     if (!spans.length || !chunks.length) return;
@@ -751,7 +814,7 @@ function ReadStep(props: {
       const first = spans[chunks[index].start];
       const rect = first.getBoundingClientRect();
       if (rect.top > window.innerHeight * 0.7 || rect.top < 0) first.scrollIntoView({ block: "center", behavior: "smooth" });
-      if (index === chunks.length - 1) return; // stay on the last phrase
+      if (!running || index === chunks.length - 1) return; // hold while paused or on the last phrase
       timer = setTimeout(() => {
         show(false);
         index++;
@@ -787,18 +850,7 @@ function ReadStep(props: {
             Purpose: {props.purpose}
           </span>
         )}
-        <span className="ml-auto hidden text-xs text-stone-400 md:inline">
-          <Kbd>Space</Kbd> pause
-          {pacerWpm && (
-            <>
-              {" · "}
-              <Kbd>←</Kbd>
-              <Kbd>→</Kbd> sentence · <Kbd>Shift</Kbd>+<Kbd>←</Kbd>
-              <Kbd>→</Kbd> phrase
-            </>
-          )}
-        </span>
-        <div className="ml-auto flex gap-2 md:ml-0">
+        <div className="ml-auto flex gap-2">
           <button className={buttonSecondary} onClick={props.onToggle}>
             {running ? "Pause" : "Resume"}
           </button>
@@ -806,11 +858,23 @@ function ReadStep(props: {
             Done reading
           </button>
         </div>
+        <div className="flex basis-full flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          {props.controls}
+          <span className="hidden text-xs text-stone-400 lg:inline">
+            <Kbd>Space</Kbd> pause · <Kbd>P</Kbd> pacer · <Kbd>B</Kbd> breaks
+            {pacerWpm && (
+              <>
+                {" · "}
+                <Kbd>←</Kbd>
+                <Kbd>→</Kbd> sentence · <Kbd>Shift</Kbd>+<Kbd>←</Kbd>
+                <Kbd>→</Kbd> phrase · <Kbd>−</Kbd>
+                <Kbd>+</Kbd> speed
+              </>
+            )}
+          </span>
+        </div>
       </div>
-      <div
-        ref={containerRef}
-        className={`reader mx-auto max-w-[68ch] transition ${running ? "" : "opacity-30 blur-[2px]"}`}
-      >
+      <div ref={containerRef} className="reader mx-auto max-w-[68ch]">
         {rendered}
       </div>
       <div className="mx-auto max-w-[68ch]">

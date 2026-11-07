@@ -89,8 +89,6 @@ export async function startSession(input: {
   prediction: string;
   preAnswers: string[] | null;
   previewMs: number;
-  pacerWpm: number | null;
-  pacerChunks: ChunkPlan["source"] | null;
 }): Promise<number> {
   const db = await getDb();
   const [row] = await db
@@ -103,14 +101,17 @@ export async function startSession(input: {
       prediction: input.prediction.trim() || null,
       preAnswers: input.preAnswers?.map((a) => a.trim()) ?? null,
       previewMs: Math.round(input.previewMs),
-      pacerWpm: input.pacerWpm,
-      pacerChunks: input.pacerChunks,
     })
     .returning({ id: sessions.id });
   return row.id;
 }
 
-export async function finishReading(sessionId: number, readMs: number): Promise<{ wpm: number }> {
+export async function finishReading(
+  sessionId: number,
+  readMs: number,
+  /** Time-weighted pacer speed and phrasing, when the pacer ran for most of the read. */
+  pacer: { wpm: number; chunks: ChunkPlan["source"] } | null,
+): Promise<{ wpm: number }> {
   const db = await getDb();
   const session = await db.query.sessions.findFirst({ where: eq(sessions.id, sessionId) });
   if (!session) throw new Error("Session not found");
@@ -119,7 +120,10 @@ export async function finishReading(sessionId: number, readMs: number): Promise<
 
   const ms = Math.max(1000, Math.round(readMs));
   const wpm = article.wordCount / (ms / 60_000);
-  await db.update(sessions).set({ readMs: ms, wpm, status: "recall" }).where(eq(sessions.id, sessionId));
+  await db
+    .update(sessions)
+    .set({ readMs: ms, wpm, pacerWpm: pacer?.wpm ?? null, pacerChunks: pacer?.chunks ?? null, status: "recall" })
+    .where(eq(sessions.id, sessionId));
   return { wpm };
 }
 
