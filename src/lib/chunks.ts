@@ -85,6 +85,8 @@ const PAUSE = { clause: 0.5, sentence: 1, segment: 1.5 };
 // Dense chunks (new terms, definitions, mechanisms) get more time.
 const HARD_FACTOR = 1.35;
 
+export const endsSentence = (word: string) => /[.!?]["”)]?$/.test(word);
+
 function wordWeight(word: string, language: Language): number {
   // Vietnamese words here are single syllables of similar length.
   if (language === "vi") return 1;
@@ -104,7 +106,7 @@ export function chunkDurations(plan: ChunkPlan, segments: string[][], wpm: numbe
     if (c.hard) w *= HARD_FACTOR;
     const last = words[c.end - 1] ?? "";
     if (ends.has(c.end)) w += PAUSE.segment;
-    else if (/[.!?]["”)]?$/.test(last)) w += PAUSE.sentence;
+    else if (endsSentence(last)) w += PAUSE.sentence;
     else if (/[,;:]$/.test(last)) w += PAUSE.clause;
     return w;
   });

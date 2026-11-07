@@ -5,7 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { checkPurpose, finishReading, startSession, submitRecall } from "@/app/actions";
 import type { ChunkPlan, Language, PurposeCoach, PurposeType, Quiz, ReadingMode } from "@/db/schema";
 import type { ChunksResult } from "@/lib/chunker";
-import { chunkDurations, rulePlan, segmentEnds, segmentWords } from "@/lib/chunks";
+import { chunkDurations, endsSentence, rulePlan, segmentEnds, segmentWords } from "@/lib/chunks";
 import type { QuizResult } from "@/lib/quiz";
 import {
   MAX_PLAUSIBLE_WPM,
@@ -444,7 +444,8 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
             <p className="mt-1 text-sm text-stone-500">
               Highlights one meaningful phrase at a time to keep attention from drifting, lingering on long or dense
               phrases and at the ends of sentences. The full text stays visible, so you can still look back — unlike
-              one-word-at-a-time apps, which hurt comprehension.
+              one-word-at-a-time apps, which hurt comprehension. While reading: Space pauses, ←/→ moves a sentence,
+              Shift+←/→ a phrase.
             </p>
             <p className="mt-1 text-xs text-stone-500">
               Phrases:{" "}
@@ -610,6 +611,14 @@ function HeadingTag({ level, children }: { level: number; children: ReactNode })
   return <h4>{children}</h4>;
 }
 
+function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="mx-0.5 rounded border border-stone-300 px-1 font-sans text-[11px] dark:border-stone-700">
+      {children}
+    </kbd>
+  );
+}
+
 function ReadStep(props: {
   blocks: Block[];
   purpose: string;
@@ -628,6 +637,62 @@ function ReadStep(props: {
   const containerRef = useRef<HTMLDivElement>(null);
   // Word index of the current phrase's first word: survives pauses and a plan swap mid-read.
   const pos = useRef(0);
+  // Bumped by keyboard jumps to restart the pacer at the new position.
+  const [jump, setJump] = useState(0);
+
+  // Chunk indices where a sentence (or a heading, paragraph or list item) begins.
+  const sentenceStarts = useMemo(() => {
+    const words = segments.flat();
+    const ends = segmentEnds(segments);
+    const starts = [0];
+    plan.chunks.forEach((c, i) => {
+      if (i + 1 < plan.chunks.length && (ends.has(c.end) || endsSentence(words[c.end - 1] ?? ""))) starts.push(i + 1);
+    });
+    return starts;
+  }, [plan, segments]);
+
+  /** Moves the pacer a phrase or a sentence. Back goes to the start of the current sentence first,
+   * then to the previous one, like a media player's back button. */
+  const move = useCallback(
+    (unit: "phrase" | "sentence", dir: -1 | 1) => {
+      const { chunks } = plan;
+      if (!chunks.length) return;
+      const cur = Math.max(0, chunks.findIndex((c) => c.end > pos.current));
+      let next = cur + dir;
+      if (unit === "sentence") {
+        const beyond = sentenceStarts.filter((s) => (dir > 0 ? s > cur : s < cur));
+        const start = sentenceStarts.filter((s) => s <= cur).at(-1) ?? 0;
+        next = dir > 0 ? (beyond[0] ?? cur) : start < cur ? start : (beyond.at(-1) ?? 0);
+      }
+      pos.current = chunks[Math.min(chunks.length - 1, Math.max(0, next))].start;
+      setJump((j) => j + 1);
+    },
+    [plan, sentenceStarts],
+  );
+
+  // Keyboard: Space pauses or resumes; ←/→ move a sentence, Shift+←/→ a phrase.
+  const onToggle = useRef(props.onToggle);
+  useEffect(() => {
+    onToggle.current = props.onToggle;
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (e.key === " ") {
+        // a focused button already handles Space itself
+        if (target?.tagName === "BUTTON") return;
+        e.preventDefault();
+        if (!e.repeat) onToggle.current();
+      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && pacerWpm) {
+        e.preventDefault();
+        move(e.shiftKey ? "phrase" : "sentence", e.key === "ArrowLeft" ? -1 : 1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [move, pacerWpm]);
 
   // Render words as spans once; the pacer then toggles classes imperatively.
   // Word numbering must match splitWords/segmentWords, which the chunk plan indexes into.
@@ -698,7 +763,7 @@ function ReadStep(props: {
       clearTimeout(timer);
       show(false);
     };
-  }, [pacerWpm, running, plan, segments, language]);
+  }, [pacerWpm, running, plan, segments, language, jump]);
 
   // Optional phrase breaks: a little extra space after each phrase (visual-syntactic formatting).
   useEffect(() => {
@@ -722,7 +787,18 @@ function ReadStep(props: {
             Purpose: {props.purpose}
           </span>
         )}
-        <div className="ml-auto flex gap-2">
+        <span className="ml-auto hidden text-xs text-stone-400 md:inline">
+          <Kbd>Space</Kbd> pause
+          {pacerWpm && (
+            <>
+              {" · "}
+              <Kbd>←</Kbd>
+              <Kbd>→</Kbd> sentence · <Kbd>Shift</Kbd>+<Kbd>←</Kbd>
+              <Kbd>→</Kbd> phrase
+            </>
+          )}
+        </span>
+        <div className="ml-auto flex gap-2 md:ml-0">
           <button className={buttonSecondary} onClick={props.onToggle}>
             {running ? "Pause" : "Resume"}
           </button>
