@@ -91,7 +91,7 @@ export async function suggestedPacerWpm(language: Language): Promise<number> {
     .orderBy(desc(sessions.createdAt))
     .limit(5);
   const values = rows.map((r) => r.wpm!).sort((a, b) => a - b);
-  if (!values.length) return language === "vi" ? 200 : 230;
+  if (!values.length) return { en: 230, vi: 200, zh: 300 }[language];
   const median = Math.round(values[Math.floor(values.length / 2)] / 10) * 10;
   return Math.min(PACER_MAX_WPM, Math.max(PACER_MIN_WPM, median));
 }
@@ -109,7 +109,7 @@ const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.le
 
 /** Averages over the 5 most recent sessions, compared with the first 5. */
 export function computeStats(all: CompletedSession[]): LanguageStats[] {
-  return (["en", "vi"] as const).map((language) => {
+  return (["en", "vi", "zh"] as const).map((language) => {
     const rows = all.filter((s) => s.language === language); // newest first
     const recent = rows.slice(0, 5);
     const first = rows.slice(-5);

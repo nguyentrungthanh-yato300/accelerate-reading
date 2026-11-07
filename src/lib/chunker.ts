@@ -3,22 +3,22 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { articles, type ChunkPlan, type Language } from "@/db/schema";
 import { generateChunks, getModel, type ChunkedSegment } from "@/lib/ai";
-import { planFromSizes, ruleSizes, segmentWords, splitWords } from "@/lib/chunks";
-import { parseBlocks } from "@/lib/text";
+import { planFromSizes, ruleSizes, segmentTexts } from "@/lib/chunks";
+import { parseBlocks, splitWords } from "@/lib/text";
 
 export type ChunksResult = { plan: ChunkPlan | null; error?: string };
 
 // The model's output is the text again, as JSON: small batches keep it within limits and, run in
-// parallel, keep the wait short.
-const BATCH_WORDS = 600;
+// parallel, keep the wait short. Sizes are in units (words, syllables, characters), about 600 words.
+const BATCH_UNITS: Record<Language, number> = { en: 600, vi: 800, zh: 1000 };
 const PARALLEL_BATCHES = 4;
 // Longer AI chunks are split again by the rules.
-const MAX_AI_CHUNK = 7;
+const MAX_AI_CHUNK: Record<Language, number> = { en: 7, vi: 8, zh: 10 };
 
-/** Validates the model's chunks for one segment; null when the words did not come back unchanged. */
+/** Validates the model's chunks for one segment; null when the units did not come back unchanged. */
 function sizesFromAi(words: string[], seg: ChunkedSegment | undefined, language: Language) {
   if (!seg) return null;
-  const chunkWords = seg.chunks.map(splitWords);
+  const chunkWords = seg.chunks.map((c) => splitWords(c, language));
   const flat = chunkWords.flat();
   if (flat.length !== words.length || flat.some((w, i) => w !== words[i]) || chunkWords.some((c) => !c.length)) {
     return null;
@@ -26,7 +26,7 @@ function sizesFromAi(words: string[], seg: ChunkedSegment | undefined, language:
   const sizes: number[] = [];
   const hard = new Set<number>();
   chunkWords.forEach((c, i) => {
-    const parts = c.length > MAX_AI_CHUNK ? ruleSizes(c, language) : [c.length];
+    const parts = c.length > MAX_AI_CHUNK[language] ? ruleSizes(c, language) : [c.length];
     for (const n of parts) {
       if (seg.hard.includes(i)) hard.add(sizes.length);
       sizes.push(n);
@@ -35,14 +35,15 @@ function sizesFromAi(words: string[], seg: ChunkedSegment | undefined, language:
   return { sizes, hard };
 }
 
-async function aiPlan(segments: string[][], language: Language): Promise<ChunkPlan> {
+async function aiPlan(texts: string[], language: Language): Promise<ChunkPlan> {
   const model = getModel();
   if (!model) throw new Error("AI is not configured.");
+  const segments = texts.map((t) => splitWords(t, language));
 
   const batches: number[][] = [[]];
   let count = 0;
   segments.forEach((words, i) => {
-    if (count + words.length > BATCH_WORDS && batches.at(-1)!.length) {
+    if (count + words.length > BATCH_UNITS[language] && batches.at(-1)!.length) {
       batches.push([]);
       count = 0;
     }
@@ -56,7 +57,7 @@ async function aiPlan(segments: string[][], language: Language): Promise<ChunkPl
       batches.slice(i, i + PARALLEL_BATCHES).map(async (batch) => {
         const out = await generateChunks(
           model,
-          batch.map((s, local) => ({ id: local, text: segments[s].join(" ") })),
+          batch.map((s, local) => ({ id: local, text: texts[s] })),
           language,
         );
         for (const seg of out) if (batch[seg.id] !== undefined) results.set(batch[seg.id], seg);
@@ -85,7 +86,7 @@ export async function ensureChunks(articleId: number): Promise<ChunksResult> {
   if (article.chunks) return { plan: article.chunks };
 
   try {
-    const plan = await aiPlan(segmentWords(parseBlocks(article.content)), article.language);
+    const plan = await aiPlan(segmentTexts(parseBlocks(article.content)), article.language);
     await db.update(articles).set({ chunks: plan }).where(eq(articles.id, articleId));
     return { plan };
   } catch (e) {

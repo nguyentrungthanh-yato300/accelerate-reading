@@ -15,7 +15,7 @@ import {
 } from "@/db/schema";
 import { coachPurpose, evaluateSummary, getModel } from "@/lib/ai";
 import { extractFromUrl } from "@/lib/extract";
-import { countWords, detectLanguage } from "@/lib/text";
+import { countWords, detectLanguage, unitLabel } from "@/lib/text";
 
 export type FormState = { error?: string };
 
@@ -39,8 +39,11 @@ export async function createArticle(_prev: FormState, formData: FormData): Promi
     }
   }
 
-  const wordCount = countWords(content);
-  if (wordCount < 50) return { error: "Please provide at least 50 words of text." };
+  const language = detectLanguage(content);
+  const wordCount = countWords(content, language);
+  // About 50 words' worth of text; a Chinese word averages about two characters.
+  const minUnits = language === "zh" ? 100 : 50;
+  if (wordCount < minUnits) return { error: `Please provide at least ${minUnits} ${unitLabel(language)} of text.` };
   if (!title) {
     const firstLine = content.split("\n").find((l) => l.trim()) ?? "Untitled";
     title = firstLine.replace(/^#+\s*/, "").slice(0, 100);
@@ -49,7 +52,7 @@ export async function createArticle(_prev: FormState, formData: FormData): Promi
   const db = await getDb();
   const [row] = await db
     .insert(articles)
-    .values({ title, content, sourceUrl: url || null, language: detectLanguage(content), wordCount })
+    .values({ title, content, sourceUrl: url || null, language, wordCount })
     .returning({ id: articles.id });
 
   revalidatePath("/");

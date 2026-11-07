@@ -30,7 +30,7 @@ export function NewArticleForm() {
           name="content"
           required
           rows={8}
-          placeholder={"Paste a document, article or chapter (English or Vietnamese).\nMarkdown headings (#, ##) are used for the preview step."}
+          placeholder={"Paste a document, article or chapter (English, Vietnamese or Chinese).\nMarkdown headings (#, ##) are used for the preview step."}
           className={`${input} font-mono text-xs`}
         />
       ) : (

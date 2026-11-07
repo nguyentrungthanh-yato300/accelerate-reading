@@ -12,7 +12,8 @@ export default async function HistoryPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Progress</h1>
         <p className="mt-1 text-sm text-stone-500">
-          English is measured in words/min and Vietnamese in syllables/min, so the two are tracked separately.
+          English is measured in words/min, Vietnamese in syllables/min and Chinese in characters/min, so each
+          language is tracked separately.
         </p>
       </div>
 

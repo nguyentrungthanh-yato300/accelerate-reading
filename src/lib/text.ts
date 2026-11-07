@@ -17,18 +17,43 @@ export type Block =
 const VI_CHARS =
   /[ăâđêôơưàáạảãằắặẳẵầấậẩẫèéẹẻẽềếệểễìíịỉĩòóọỏõồốộổỗờớợởỡùúụủũừứựửữỳýỵỷỹ]/gi;
 
-/** Heuristic: text with a meaningful share of Vietnamese diacritics is Vietnamese. */
+export const LANGUAGE_NAMES: Record<Language, string> = { en: "English", vi: "Vietnamese", zh: "Chinese" };
+
+const HAN = /\p{Script=Han}/u;
+const HAN_ALL = /\p{Script=Han}/gu;
+
+/** Heuristic: mostly Han characters is Chinese; a meaningful share of Vietnamese diacritics is
+ * Vietnamese; anything else is English. */
 export function detectLanguage(text: string): Language {
   const letters = text.match(/\p{L}/gu)?.length ?? 0;
   if (letters === 0) return "en";
+  if ((text.match(HAN_ALL)?.length ?? 0) / letters > 0.3) return "zh";
   const vi = text.match(VI_CHARS)?.length ?? 0;
   return vi / letters > 0.03 ? "vi" : "en";
 }
 
-/** Counts whitespace-separated tokens containing a letter or digit.
- * For Vietnamese this counts syllables ("tiếng"), which is the natural unit. */
-export function countWords(text: string): number {
-  return text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+// Chinese has no spaces between words, so each Han character is a unit, carrying the closing
+// punctuation that follows it (，。、）” …) but not opening brackets or quotes, which belong to what
+// comes next; runs of other characters (Latin words, numbers) stay whole.
+const ZH_TOKEN = /\p{Script=Han}[\p{Pe}\p{Pf}\p{Po}]*|[^\s\p{Script=Han}]+/gu;
+
+/** Splits text into units and the whitespace between them, in order; joining the parts gives the
+ * text back. Units are words in English, syllables in Vietnamese and characters in Chinese. */
+export function splitParts(text: string, language: Language): string[] {
+  const parts = text.split(/(\s+)/).filter(Boolean);
+  if (language !== "zh") return parts;
+  return parts.flatMap((p) => (/\s/.test(p) ? [p] : (p.match(ZH_TOKEN) ?? [p])));
+}
+
+/** The units of a text (see splitParts), without whitespace. The reader renders one span per unit. */
+export function splitWords(text: string, language: Language): string[] {
+  return splitParts(text, language).filter((p) => !/^\s+$/.test(p));
+}
+
+/** Counts units that contain a letter or digit: words in English, syllables ("tiếng") in Vietnamese,
+ * characters (字) in Chinese — each language's natural unit for reading speed. */
+export function countWords(text: string, language: Language): number {
+  return splitWords(text, language).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 }
 
 /** Above this, a "reading" was really a skip-through; such sessions shouldn't steer the pacer. */
@@ -37,7 +62,15 @@ export const PACER_MIN_WPM = 100;
 export const PACER_MAX_WPM = 600;
 
 export function unitLabel(language: Language): string {
-  return language === "vi" ? "syllables" : "words";
+  return { en: "words", vi: "syllables", zh: "characters" }[language];
+}
+
+/** Joins wrapped lines of a paragraph; Chinese lines join without a space. */
+function joinLines(lines: string[]): string {
+  return lines.reduce((acc, line) => {
+    if (!acc) return line;
+    return HAN.test(acc.at(-1)!) && HAN.test(line[0]) ? acc + line : `${acc} ${line}`;
+  }, "");
 }
 
 /** Parses lightweight markdown (headings, lists, code fences, paragraphs). */
@@ -48,7 +81,7 @@ export function parseBlocks(content: string): Block[] {
   let list: string[] = [];
 
   const flushPara = () => {
-    if (para.length) blocks.push({ type: "paragraph", text: para.join(" ").trim() });
+    if (para.length) blocks.push({ type: "paragraph", text: joinLines(para).trim() });
     para = [];
   };
   const flushList = () => {
@@ -96,8 +129,14 @@ export function parseBlocks(content: string): Block[] {
 }
 
 function firstSentence(text: string, maxWords = 30): string {
-  const match = text.match(/^.+?[.!?](?=\s|$)/);
+  // Chinese full stops need no following space.
+  const match = text.match(/^.+?(?:[.!?](?=\s|$)|[。！？])/);
   const sentence = (match ? match[0] : text).trim();
+  // Chinese: cap by characters, about two per English word of meaning.
+  if (HAN.test(sentence)) {
+    const chars = Array.from(sentence);
+    return chars.length > maxWords * 2 ? chars.slice(0, maxWords * 2).join("") + "…" : sentence;
+  }
   const words = sentence.split(/\s+/);
   return words.length > maxWords ? words.slice(0, maxWords).join(" ") + "…" : sentence;
 }

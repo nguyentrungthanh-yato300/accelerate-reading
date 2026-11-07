@@ -27,7 +27,8 @@ body {
 
 /* Reading surface */
 .reader {
-  font-family: var(--font-reading), Georgia, serif;
+  /* Literata has no CJK glyphs: Chinese falls through to a system serif (Song/Ming) face. */
+  font-family: var(--font-reading), Georgia, "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
   font-size: 1.15rem;
   line-height: 1.8;
 }

@@ -11,10 +11,12 @@ import {
   MAX_PLAUSIBLE_WPM,
   PACER_MAX_WPM,
   PACER_MIN_WPM,
+  LANGUAGE_NAMES,
   PURPOSE_TYPES,
   buildPreview,
   formatDuration,
   parseBlocks,
+  splitParts,
   unitLabel,
   type Block,
 } from "@/lib/text";
@@ -83,7 +85,7 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
   const [showBreaks, setShowBreaks] = useState(false);
   const [aiPlan, setAiPlan] = useState<ChunkPlan | null>(null);
   const [chunksFailed, setChunksFailed] = useState(false);
-  const segments = useMemo(() => segmentWords(blocks), [blocks]);
+  const segments = useMemo(() => segmentWords(blocks, article.language), [blocks, article.language]);
   const fallbackPlan = useMemo(() => rulePlan(segments, article.language), [segments, article.language]);
   const plan = aiPlan ?? fallbackPlan;
   const [sessionId, setSessionId] = useState<number | null>(null);
@@ -284,7 +286,7 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
       <div>
         <h1 className="text-xl font-semibold tracking-tight">{article.title}</h1>
         <p className="mt-1 text-sm text-stone-500">
-          {article.wordCount} {unit} · {article.language === "vi" ? "Vietnamese" : "English"}
+          {article.wordCount} {unit} · {LANGUAGE_NAMES[article.language]}
         </p>
       </div>
 
@@ -761,7 +763,7 @@ function ReadStep(props: {
   const rendered = useMemo(() => {
     let w = 0;
     const words = (text: string) =>
-      text.split(/(\s+)/).map((part, i) =>
+      splitParts(text, language).map((part, i) =>
         /\S/.test(part) ? (
           <span key={i} data-w={w++}>
             {part}
@@ -792,7 +794,7 @@ function ReadStep(props: {
           return <pre key={i}>{b.text}</pre>;
       }
     });
-  }, [blocks]);
+  }, [blocks, language]);
 
   // Pacer: one phrase at a time, each shown for a time that follows its length, density and the
   // pause after it, so the reader is never pushed through a hard phrase or held on an easy one.
@@ -874,7 +876,8 @@ function ReadStep(props: {
           </span>
         </div>
       </div>
-      <div ref={containerRef} className="reader mx-auto max-w-[68ch]">
+      {/* lang picks the right CJK glyphs and line breaking */}
+      <div ref={containerRef} lang={language} className="reader mx-auto max-w-[68ch]">
         {rendered}
       </div>
       <div className="mx-auto max-w-[68ch]">

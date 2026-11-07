@@ -12,7 +12,7 @@
 | Thông số | Đã chốt |
 |---|---|
 | Người dùng | Người đi làm, đọc nhiều tài liệu kỹ thuật |
-| Ngôn ngữ nội dung | Tiếng Anh **và** tiếng Việt |
+| Ngôn ngữ nội dung | Tiếng Anh, tiếng Việt **và** tiếng Trung |
 | Ngôn ngữ giao diện | **Tiếng Anh** |
 | Nền tảng | Website, chạy trên máy cá nhân |
 | Triết lý | **Áp dụng khoa học** (khoa học nhận thức, khoa học thần kinh về đọc), trung thực, không hứa kiểu "đọc 1000 từ/phút" |
@@ -48,7 +48,7 @@ Nếu không có AI key, app vẫn đo tốc độ và lưu bản tóm tắt, ch
 
 ## 4. Chỉ số
 
-- **Speed:** số từ chia cho số phút đọc. Tiếng Anh tính bằng **từ/phút**. Tiếng Việt tính bằng **âm tiết (tiếng)/phút**, vì mỗi chữ cách nhau bằng dấu cách là một âm tiết. Hai ngôn ngữ **luôn được theo dõi riêng**, không so sánh chéo.
+- **Speed:** số từ chia cho số phút đọc. Tiếng Anh tính bằng **từ/phút**. Tiếng Việt tính bằng **âm tiết (tiếng)/phút**, vì mỗi chữ cách nhau bằng dấu cách là một âm tiết. Tiếng Trung tính bằng **chữ (字)/phút**, vì tiếng Trung không có dấu cách giữa các từ. Các ngôn ngữ **luôn được theo dõi riêng**, không so sánh chéo.
 - **Comprehension:** tỷ lệ trả lời đúng quiz.
 - **Effective speed = Speed × Comprehension.** Đây là **chỉ số chính**: đọc nhanh mà không hiểu thì không được tính.
 - **Recall score (0–100):** điểm AI chấm bản tóm tắt.
@@ -64,7 +64,7 @@ Nếu không có AI key, app vẫn đo tốc độ và lưu bản tóm tắt, ch
 | AI | Vercel AI SDK v7, **không phụ thuộc một nhà cung cấp**: `google`, `anthropic`, `openai`, `deepseek`, `ollama`, `openai-compatible` | Đổi nhà cung cấp chỉ bằng biến môi trường |
 | AI đang dùng | **DeepSeek** (`AI_PROVIDER=deepseek`, model `deepseek-v4-flash`) | Rẻ. Provider riêng `@ai-sdk/deepseek` đưa JSON schema vào prompt nên kết quả ổn định |
 | Nhập URL | `@mozilla/readability` + `linkedom` | Lấy phần nội dung chính, bỏ menu và footer |
-| Font đọc | Literata | Thiết kế cho đọc lâu trên màn hình, hỗ trợ tiếng Việt |
+| Font đọc | Literata (tiếng Trung dùng font Song/Ming của hệ thống) | Thiết kế cho đọc lâu trên màn hình, hỗ trợ tiếng Việt |
 
 ## 6. Trạng thái hiện tại
 

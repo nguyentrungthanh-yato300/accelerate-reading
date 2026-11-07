@@ -67,7 +67,11 @@ export function aiStatus(): { configured: boolean; label: string } {
 }
 
 function langName(language: Language) {
-  return language === "vi" ? "Vietnamese" : "English";
+  return {
+    en: "English",
+    vi: "Vietnamese",
+    zh: "Chinese, in the same script (simplified or traditional) as the text",
+  }[language];
 }
 
 const MAX_CHARS = 60_000;
@@ -137,10 +141,13 @@ export async function generateChunks(
   segments: { id: number; text: string }[],
   language: Language,
 ): Promise<ChunkedSegment[]> {
-  const unit =
-    language === "vi"
-      ? "2-6 syllables. Never split a multi-syllable Vietnamese word (e.g. keep 'cơ sở dữ liệu' or 'máy ảo' whole)"
-      : "2-5 words";
+  const unit = {
+    en: "2-5 words",
+    vi: "2-6 syllables. Never split a multi-syllable Vietnamese word (e.g. keep 'cơ sở dữ liệu' or 'máy ảo' whole)",
+    zh:
+      "3-8 characters. Never split a multi-character Chinese word (e.g. keep '虚拟机' or '数据库' whole), and keep " +
+      "punctuation such as '，' or '。' at the end of the chunk it follows",
+  }[language];
   const { output } = await generateText({
     model,
     output: Output.object({ schema: chunkSchema }),
@@ -158,7 +165,8 @@ export async function generateChunks(
     prompt:
       `Split every segment below into chunks of usually ${unit}. A single word is fine when it stands alone. ` +
       `Copy the words exactly, keeping punctuation attached and the original order: joining a segment's ` +
-      `chunks with spaces must reproduce its text. Do not add, drop, fix or translate anything. ` +
+      `chunks ${language === "zh" ? "" : "with spaces "}must reproduce its text. ` +
+      `Do not add, drop, fix or translate anything. ` +
       `Mark as hard only the densest chunks, at most about 1 in 7. Return every segment id.\n\n` +
       JSON.stringify(segments),
   });

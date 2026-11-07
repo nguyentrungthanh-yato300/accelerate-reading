@@ -1,6 +1,6 @@
 # Accelerate Reading
 
-A personal web app for reading technical documents (English and Vietnamese) faster, with better understanding and retention. The training is based on reading research, not on "speed reading" myths.
+A personal web app for reading technical documents (English, Vietnamese and Chinese) faster, with better understanding and retention. The training is based on reading research, not on "speed reading" myths.
 
 ## Why it works this way
 
@@ -21,7 +21,7 @@ A personal web app for reading technical documents (English and Vietnamese) fast
 5. **Check:** answer 5 AI-generated comprehension questions.
 6. **Results:** speed, comprehension, effective speed, a recall score, feedback, and a quiz review.
 
-English is measured in words/min. Vietnamese is measured in syllables (tiếng)/min, so the two languages are tracked separately on the Progress page.
+English is measured in words/min, Vietnamese in syllables (tiếng)/min and Chinese in characters (字)/min, so each language is tracked separately on the Progress page.
 
 ## Setup
 

@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-export type Language = "en" | "vi";
+export type Language = "en" | "vi" | "zh";
 export type ReadingMode = "skim" | "deep";
 export type SessionStatus = "reading" | "recall" | "done";
 /** What the reader's purpose question asks for; drives the suggested reading mode. */

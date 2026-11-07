@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { Language } from "@/db/schema";
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
@@ -20,7 +21,7 @@ export function Stat({ label, value, hint }: { label: string; value: ReactNode; 
   );
 }
 
-export function LangBadge({ language }: { language: "en" | "vi" }) {
+export function LangBadge({ language }: { language: Language }) {
   return (
     <span className="rounded bg-stone-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase text-stone-600 dark:bg-stone-800 dark:text-stone-300">
       {language}
