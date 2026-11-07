@@ -15,8 +15,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
+    // suppressHydrationWarning: browser extensions (e.g. page translation, dark mode)
+    // add classes/attributes to <html> before React hydrates.
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} ${literata.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col font-sans">
