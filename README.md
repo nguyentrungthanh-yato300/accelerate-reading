@@ -35,7 +35,7 @@ Without an AI key the app still works: you get speed tracking and recall, but no
 
 ### AI providers
 
-The app uses the provider-agnostic [AI SDK](https://ai-sdk.dev). Set `AI_PROVIDER` to `google`, `anthropic`, `openai`, `ollama` (local and private), or `openai-compatible` (DeepSeek, OpenRouter, …). See `.env.example`.
+The app uses the provider-agnostic [AI SDK](https://ai-sdk.dev). Set `AI_PROVIDER` to `google`, `anthropic`, `openai`, `deepseek` (very cheap), `ollama` (local and private), or `openai-compatible` (OpenRouter, Groq, …). See `.env.example`.
 
 ### Database
 

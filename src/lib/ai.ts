@@ -1,5 +1,6 @@
 import "server-only";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogle } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -9,13 +10,14 @@ import type { Language, Quiz, ReadingMode, SummaryFeedback } from "@/db/schema";
 
 /**
  * Provider-agnostic model selection. Configure with env vars:
- *   AI_PROVIDER = google | anthropic | openai | openai-compatible | ollama
+ *   AI_PROVIDER = google | anthropic | openai | deepseek | openai-compatible | ollama
  *   AI_MODEL    = model id (optional, sensible default per provider)
  */
 const DEFAULT_MODELS: Record<string, string> = {
   google: "gemini-flash-latest",
   anthropic: "claude-sonnet-5-5",
   openai: "gpt-5.5",
+  deepseek: "deepseek-v4-flash",
   ollama: "qwen3",
 };
 
@@ -25,6 +27,7 @@ function resolveProvider(): string | null {
   if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) return "google";
   if (process.env.ANTHROPIC_API_KEY) return "anthropic";
   if (process.env.OPENAI_API_KEY) return "openai";
+  if (process.env.DEEPSEEK_API_KEY) return "deepseek";
   return null;
 }
 
@@ -40,6 +43,8 @@ export function getModel(): LanguageModel | null {
       return createAnthropic()(modelId);
     case "openai":
       return createOpenAI()(modelId);
+    case "deepseek":
+      return createDeepSeek()(modelId);
     case "ollama":
       return createOpenAICompatible({
         name: "ollama",
