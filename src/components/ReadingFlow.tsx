@@ -20,15 +20,17 @@ import {
   unitLabel,
   type Block,
 } from "@/lib/text";
+import { ExplainStep, type Explanation } from "./ExplainStep";
 import { buttonPrimary, buttonSecondary, input } from "./ui";
 
-type Step = "preview" | "purpose" | "read" | "recall" | "quiz";
+type Step = "preview" | "purpose" | "read" | "recall" | "explain" | "quiz";
 
 const STEPS: { id: Step; label: string }[] = [
   { id: "preview", label: "Preview" },
   { id: "purpose", label: "Purpose" },
   { id: "read", label: "Read" },
   { id: "recall", label: "Recall" },
+  { id: "explain", label: "Explain" },
   { id: "quiz", label: "Check" },
 ];
 
@@ -91,6 +93,7 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [wpm, setWpm] = useState<number | null>(null);
   const [summary, setSummary] = useState("");
+  const [explanation, setExplanation] = useState<Explanation | null>(null);
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [quizError, setQuizError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<(number | null)[]>([]);
@@ -259,6 +262,7 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
         sessionId,
         summary,
         answers: withQuiz && quiz ? answers.map((a) => a ?? -1) : null,
+        explanation,
       });
       if (res.ok) {
         router.push(`/sessions/${sessionId}`);
@@ -271,15 +275,21 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
     setBusy(false);
   }
 
-  async function goToQuiz() {
+  function goToExplain() {
     if (!aiConfigured) return submit(false);
+    setStep("explain");
+    window.scrollTo({ top: 0 });
+  }
+
+  async function goToQuiz() {
     setStep("quiz");
     window.scrollTo({ top: 0 });
     await loadQuiz();
   }
 
-  const stepIndex = STEPS.findIndex((s) => s.id === step);
-  const steps = aiConfigured ? STEPS : STEPS.filter((s) => s.id !== "quiz");
+  // Explain and Check both need AI feedback, so without AI the session ends after Recall.
+  const steps = aiConfigured ? STEPS : STEPS.filter((s) => s.id !== "explain" && s.id !== "quiz");
+  const stepIndex = steps.findIndex((s) => s.id === step);
 
   return (
     <div className="space-y-6">
@@ -579,9 +589,24 @@ export function ReadingFlow({ article, aiConfigured, suggestedWpm }: ReadingFlow
               placeholder="Main idea: …&#10;Key points: …&#10;Answer: …"
             />
           </label>
-          <button className={buttonPrimary} disabled={busy || summary.trim().length < 20} onClick={goToQuiz}>
-            {aiConfigured ? "Continue to check" : busy ? "Saving…" : "Finish"}
+          <button className={buttonPrimary} disabled={busy || summary.trim().length < 20} onClick={goToExplain}>
+            {aiConfigured ? "Continue" : busy ? "Saving…" : "Finish"}
           </button>
+        </StepPanel>
+      )}
+
+      {step === "explain" && (
+        <StepPanel
+          title="Explain it in 60 seconds"
+          why="Explaining to someone else exposes the gaps that reading hides (the self-explanation effect), and saying the conclusion first is how busy colleagues want to hear it. Optional — skip it when you are short on time."
+        >
+          <ExplainStep
+            language={article.language}
+            onDone={(result) => {
+              setExplanation(result);
+              void goToQuiz();
+            }}
+          />
         </StepPanel>
       )}
 

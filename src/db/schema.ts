@@ -64,6 +64,24 @@ export type SummaryFeedback = {
   feedback: string;
 };
 
+/** AI review of the 60-second explanation (Explain step). Scores are 0-10. */
+export type ExplanationFeedback = {
+  clarity: number;
+  completeness: number;
+  accuracy: number;
+  /** The main message a listener would take away, in one sentence; null if none came through. */
+  mainMessage: string | null;
+  /** Whether it opened with the conclusion and then gave supporting points. */
+  conclusionFirst: boolean;
+  missedPoints: string[];
+  inaccuracies: string[];
+  /** Where the explanation wandered or padded, with a tighter way to say it. */
+  rambling: { quote: string; suggestion: string }[];
+  /** A tighter version of the same explanation, about 60 seconds spoken. */
+  improved: string;
+  feedback: string;
+};
+
 export type AiProvider = "google" | "anthropic" | "openai" | "deepseek" | "openai-compatible";
 
 // --- Auth (Better Auth's core tables; column names follow its defaults) ---
@@ -190,6 +208,12 @@ export const readingSessions = pgTable(
     quizAnswers: jsonb("quiz_answers").$type<number[]>(),
     quizScore: doublePrecision("quiz_score"),
     effectiveWpm: doublePrecision("effective_wpm"),
+    /** The 60-second explanation (typed, or transcribed from speech), when the reader did that step. */
+    explanation: text("explanation"),
+    explanationMs: integer("explanation_ms"),
+    explanationSpoken: boolean("explanation_spoken"),
+    explanationFeedback: jsonb("explanation_feedback").$type<ExplanationFeedback>(),
+    explanationScore: doublePrecision("explanation_score"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),
   },

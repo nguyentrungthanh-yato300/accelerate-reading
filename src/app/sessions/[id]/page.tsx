@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, Stat, buttonPrimary, buttonSecondary, num, pct } from "@/components/ui";
+import type { ReadingSession } from "@/db/schema";
 import { getSessionWithArticle, listCompletedSessions } from "@/lib/queries";
 import { PURPOSE_TYPES, formatDuration, unitLabel } from "@/lib/text";
 
@@ -73,6 +74,8 @@ export default async function SessionPage({ params }: PageProps<"/sessions/[id]"
           )}
         </Card>
       )}
+
+      {session.explanation && <ExplanationCard session={session} />}
 
       {(session.purpose || session.prediction || warmUp.length > 0) && (
         <Card className="space-y-4">
@@ -160,6 +163,76 @@ export default async function SessionPage({ params }: PageProps<"/sessions/[id]"
         </Link>
       </div>
     </div>
+  );
+}
+
+/** The 60-second explanation and its review: scores, the message that came through, where it
+ * wandered, and a tighter version to compare with. */
+function ExplanationCard({ session }: { session: ReadingSession }) {
+  const ex = session.explanationFeedback;
+  const seconds = session.explanationMs ? Math.round(session.explanationMs / 1000) : null;
+  return (
+    <Card className="space-y-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-semibold">Your 60-second explanation</h2>
+        <span className="text-xs text-stone-500">
+          {session.explanationSpoken ? "spoken" : "typed"}
+          {seconds !== null && (
+            <span className={seconds > 75 ? "text-amber-600" : ""}> · {seconds}s</span>
+          )}
+        </span>
+      </div>
+
+      {ex ? (
+        <>
+          <div className="grid grid-cols-3 gap-4">
+            <Stat label="Clarity" value={`${ex.clarity}/10`} />
+            <Stat label="Completeness" value={`${ex.completeness}/10`} />
+            <Stat label="Accuracy" value={`${ex.accuracy}/10`} />
+          </div>
+          <p className="text-sm">{ex.feedback}</p>
+          <div className="text-sm">
+            <h3 className="font-medium">What a listener takes away</h3>
+            <p className="mt-1 text-stone-700 dark:text-stone-300">
+              {ex.mainMessage ?? "No single main message came through."}
+            </p>
+            <p className="mt-1 text-xs text-stone-500">
+              {ex.conclusionFirst ? "✅ You led with the conclusion." : "⚠️ Lead with the conclusion, then support it."}
+            </p>
+          </div>
+          {ex.rambling.length > 0 && (
+            <div className="space-y-2 text-sm">
+              <h3 className="font-medium text-amber-700 dark:text-amber-400">Where it wandered</h3>
+              {ex.rambling.map((r, i) => (
+                <div key={i}>
+                  <p className="text-stone-500 line-through decoration-stone-400">“{r.quote}”</p>
+                  <p className="text-emerald-700 dark:text-emerald-400">→ {r.suggestion}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <PointList title="Worth mentioning" items={ex.missedPoints} tone="text-amber-700 dark:text-amber-400" />
+            <PointList title="Inaccurate" items={ex.inaccuracies} tone="text-red-700 dark:text-red-400" />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <h3 className="mb-1 text-sm font-medium">What you said</h3>
+              <p className="whitespace-pre-wrap text-sm text-stone-700 dark:text-stone-300">{session.explanation}</p>
+            </div>
+            <div>
+              <h3 className="mb-1 text-sm font-medium">A tighter version</h3>
+              <p className="whitespace-pre-wrap text-sm text-stone-700 dark:text-stone-300">{ex.improved}</p>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-stone-500">No AI review for this one (check your AI settings).</p>
+          <p className="whitespace-pre-wrap text-sm text-stone-700 dark:text-stone-300">{session.explanation}</p>
+        </>
+      )}
+    </Card>
   );
 }
 

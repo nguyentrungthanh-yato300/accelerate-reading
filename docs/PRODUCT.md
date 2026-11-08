@@ -78,7 +78,7 @@ Nếu không có AI key, app vẫn đo tốc độ và lưu bản tóm tắt, ch
 ## 7. Lộ trình tiếp theo
 
 - **Giai đoạn 2:**
-  - **Chế độ trình bày:** "giải thích bài trong 60 giây" theo cấu trúc kết luận trước, gồm 1 thông điệp chính và 3 luận điểm. AI nhận xét độ rõ ràng, đầy đủ, chính xác.
+  - ✅ **Chế độ trình bày (đã làm):** bước Explain sau Recall, tùy chọn. Giải thích bài trong 60 giây, kết luận trước rồi 3 luận điểm; nói (Web Speech API của trình duyệt) hoặc gõ. AI chấm độ rõ ràng, đầy đủ, chính xác (0–10), chỉ ra thông điệp người nghe nhận được, chỗ nói vòng kèm cách nói gọn, và viết lại bản gọn hơn. Nhận xét viết bằng ngôn ngữ người đọc dùng để trình bày.
   - **Flashcard tự sinh** cho thuật ngữ và ý chính, ôn theo FSRS. Đo tỷ lệ còn nhớ sau 1 ngày và 7 ngày.
   - **Từ điển thuật ngữ song ngữ Anh–Việt** có ôn ngắt quãng.
 - **Giai đoạn 3:**

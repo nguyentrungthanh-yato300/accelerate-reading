@@ -11,12 +11,13 @@ import {
   readingSessions,
   type AiProvider,
   type ChunkPlan,
+  type ExplanationFeedback,
   type PurposeCoach,
   type PurposeType,
   type ReadingMode,
   type SummaryFeedback,
 } from "@/db/schema";
-import { coachPurpose, evaluateSummary } from "@/lib/ai";
+import { coachPurpose, evaluateExplanation, evaluateSummary } from "@/lib/ai";
 import { getUserModel } from "@/lib/ai-settings";
 import { INVITE_COOKIE, isValidInvite } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
@@ -158,6 +159,8 @@ export async function submitRecall(input: {
   sessionId: number;
   summary: string;
   answers: number[] | null;
+  /** The optional 60-second explanation from the Explain step. */
+  explanation: { text: string; ms: number; spoken: boolean } | null;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const user = await requireUser();
   const own = await ownSession(user.id, input.sessionId);
@@ -171,23 +174,38 @@ export async function submitRecall(input: {
     quizScore = correct / quiz.questions.length;
   }
 
-  let feedback: SummaryFeedback | null = null;
+  const explanation = input.explanation?.text.trim() ? input.explanation : null;
   const model = await getUserModel(user.id);
-  if (model && quiz && input.summary.trim()) {
-    try {
-      feedback = await evaluateSummary(model, {
-        text: article.content,
-        language: article.language,
-        keyPoints: quiz.keyPoints,
-        summary: input.summary,
-        purpose: session.purpose,
-        prediction: session.prediction,
-        mode: session.mode,
-      });
-    } catch (e) {
-      console.error("Summary evaluation failed", e);
-    }
-  }
+  // Both reviews run at once, so the Explain step adds no wait.
+  const [feedback, explanationFeedback] = await Promise.all([
+    model && quiz && input.summary.trim()
+      ? evaluateSummary(model, {
+          text: article.content,
+          language: article.language,
+          keyPoints: quiz.keyPoints,
+          summary: input.summary,
+          purpose: session.purpose,
+          prediction: session.prediction,
+          mode: session.mode,
+        }).catch((e): SummaryFeedback | null => {
+          console.error("Summary evaluation failed", e);
+          return null;
+        })
+      : null,
+    model && quiz && explanation
+      ? evaluateExplanation(model, {
+          text: article.content,
+          language: article.language,
+          keyPoints: quiz.keyPoints,
+          explanation: explanation.text,
+          seconds: explanation.ms / 1000,
+          spoken: explanation.spoken,
+        }).catch((e): ExplanationFeedback | null => {
+          console.error("Explanation evaluation failed", e);
+          return null;
+        })
+      : null,
+  ]);
 
   const db = await getDb();
   await db
@@ -198,6 +216,14 @@ export async function submitRecall(input: {
       quizScore,
       summaryFeedback: feedback,
       summaryScore: feedback?.score ?? null,
+      explanation: explanation?.text.trim() ?? null,
+      explanationMs: explanation ? Math.round(explanation.ms) : null,
+      explanationSpoken: explanation?.spoken ?? null,
+      explanationFeedback,
+      // One number for trends: the mean of the three 0-10 scores, as 0-100.
+      explanationScore: explanationFeedback
+        ? ((explanationFeedback.clarity + explanationFeedback.completeness + explanationFeedback.accuracy) / 3) * 10
+        : null,
       effectiveWpm: quizScore !== null && session.wpm ? session.wpm * quizScore : null,
       status: "done",
       completedAt: new Date(),

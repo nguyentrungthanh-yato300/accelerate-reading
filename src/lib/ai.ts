@@ -6,8 +6,17 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText, Output, type LanguageModel } from "ai";
 import { z } from "zod";
-import type { AiProvider, Language, PurposeCoach, Quiz, ReadingMode, SummaryFeedback } from "@/db/schema";
+import type {
+  AiProvider,
+  ExplanationFeedback,
+  Language,
+  PurposeCoach,
+  Quiz,
+  ReadingMode,
+  SummaryFeedback,
+} from "@/db/schema";
 import { AI_PROVIDERS } from "@/lib/providers";
+import { detectLanguage } from "@/lib/text";
 
 /** A user's provider settings, with the API key decrypted (see src/lib/ai-settings.ts). */
 export type AiConfig = { provider: AiProvider; model: string | null; baseUrl: string | null; apiKey: string };
@@ -227,6 +236,69 @@ export async function evaluateSummary(
       `<text>\n${args.text.slice(0, MAX_CHARS)}\n</text>\n\n` +
       `<summary>\n${args.summary}\n</summary>\n\n` +
       `Write the feedback fields in ${langName(args.language)}.`,
+  });
+  return output;
+}
+
+const explanationSchema = z.object({
+  clarity: z.number().min(0).max(10).describe("How easy it is to follow on first hearing: plain words, short sentences, clear links."),
+  completeness: z.number().min(0).max(10).describe("How much of what matters it covers, given about 60 seconds."),
+  accuracy: z.number().min(0).max(10).describe("How faithful it is to the text; 10 means nothing wrong."),
+  mainMessage: z
+    .string()
+    .nullable()
+    .describe("The single message a listener would take away, in one sentence; null if none comes through."),
+  conclusionFirst: z.boolean().describe("True if it opens with the main conclusion, then supports it."),
+  missedPoints: z.array(z.string()).describe("Key points worth a mention in 60 seconds that it left out (at most 3)."),
+  inaccuracies: z.array(z.string()).describe("Statements that contradict the text."),
+  rambling: z
+    .array(
+      z.object({
+        quote: z.string().describe("The exact words where it wandered, repeated itself or padded."),
+        suggestion: z.string().describe("A tighter way to say it."),
+      }),
+    )
+    .describe("Up to 3 places where it talks around the point."),
+  improved: z
+    .string()
+    .describe("The same explanation rewritten tighter: main message first, then 3 supporting points, about 130 spoken words."),
+  feedback: z.string().describe("2-3 sentences of specific coaching for the next explanation."),
+});
+
+/** Coaches a short explanation of the text to a colleague: conclusion first, then three points. */
+export async function evaluateExplanation(
+  model: LanguageModel,
+  args: {
+    text: string;
+    language: Language;
+    keyPoints: string[];
+    explanation: string;
+    seconds: number;
+    spoken: boolean;
+  },
+): Promise<ExplanationFeedback> {
+  // Coach in the language the reader explained in (e.g. Vietnamese about an English text): the model
+  // tends to follow the source text's language unless it is named explicitly.
+  const coachLanguage = langName(detectLanguage(args.explanation));
+  const { output } = await generateText({
+    model,
+    output: Output.object({ schema: explanationSchema }),
+    system:
+      "You coach professionals to explain what they read to a colleague in about a minute (the Feynman technique). " +
+      "A strong explanation states the main message first, then gives about three supporting points, in plain words, " +
+      "without wandering. Judge the communication and the faithfulness to the text, not grammar or accent." +
+      (args.spoken
+        ? " The explanation was spoken and transcribed automatically: ignore missing punctuation, filler words that a " +
+          "transcriber keeps, and words it likely misheard; quote rambling only when it is real."
+        : ""),
+    prompt:
+      `Time taken: ${Math.round(args.seconds)} seconds (target 60).\n` +
+      `Key points of the text:\n${args.keyPoints.map((p) => `- ${p}`).join("\n")}\n\n` +
+      `<text>\n${args.text.slice(0, MAX_CHARS)}\n</text>\n\n` +
+      `<explanation>\n${args.explanation}\n</explanation>\n\n` +
+      `Write mainMessage, missedPoints, inaccuracies, the rambling suggestions, improved and feedback in ` +
+      `${coachLanguage}, the language the reader explained in — not the language of the text. Keep each rambling ` +
+      `quote exactly as the reader said it.`,
   });
   return output;
 }
